@@ -256,12 +256,13 @@ function WinConditions() {
 // ─── Reveal Board screen ──────────────────────────────────────────────────────
 interface RevealBoardProps {
   playerCount: number;
+  playerNames: string[];
   dealtCards:  RoleDef[];
   onPlayAgain: () => void;
   onSetup:     () => void;
 }
 
-function RevealBoard({ playerCount, dealtCards, onPlayAgain, onSetup }: RevealBoardProps) {
+function RevealBoard({ playerCount, playerNames, dealtCards, onPlayAgain, onSetup }: RevealBoardProps) {
   const playerCards = dealtCards.slice(0, playerCount);
   const centerCards = dealtCards.slice(playerCount);
 
@@ -425,6 +426,7 @@ export default function DealPage() {
       {step === 'reveal-board' && (
         <RevealBoard
           playerCount={playerCount}
+          playerNames={playerNames}
           dealtCards={dealtCards}
           onPlayAgain={handlePlayAgain}
           onSetup={handleSetup}
