@@ -10,6 +10,13 @@ interface GameState {
   selectedCardIds: string[];
   dealtCards: RoleDef[];
 
+  /** Current card positions during night — starts as a copy of dealtCards,
+   *  mutated silently as Robber/Troublemaker/Drunk perform swaps.
+   *  Indices 0…playerCount-1 are player slots; playerCount…playerCount+2 are center slots. */
+  nightCards: RoleDef[];
+  /** Set of player indices who have completed their night action */
+  nightActionsCompleted: Set<number>;
+
   setPlayerCount: (count: number) => void;
   setPlayerName: (index: number, name: string) => void;
   toggleCard: (id: string) => void;
@@ -17,6 +24,13 @@ interface GameState {
 
   deal: () => void;
   resetGame: () => void;
+
+  /** Called when the board is first revealed — copies dealtCards into nightCards */
+  initNightPhase: () => void;
+  /** Swap two positions in nightCards (used by Robber, Troublemaker, Drunk) */
+  swapNightCards: (i: number, j: number) => void;
+  /** Record that playerIdx has completed their night action */
+  markNightActionComplete: (playerIdx: number) => void;
 }
 
 const GameContext = createContext<GameState | undefined>(undefined);
@@ -26,6 +40,8 @@ export function GameProvider({ children }: { children: ReactNode }) {
   const [playerNames, setPlayerNames] = useState<string[]>(makeNames(5));
   const [selectedCardIds, setSelectedCardIds] = useState<string[]>([]);
   const [dealtCards, setDealtCards] = useState<RoleDef[]>([]);
+  const [nightCards, setNightCards] = useState<RoleDef[]>([]);
+  const [nightActionsCompleted, setNightActionsCompleted] = useState<Set<number>>(new Set());
 
   const setPlayerCount = (count: number) => {
     setPlayerCountRaw(count);
@@ -56,24 +72,58 @@ export function GameProvider({ children }: { children: ReactNode }) {
 
   const deal = () => {
     const cardsToDeal = selectedCardIds.map(id => ALL_CARDS.find(c => c.id === id)!).filter(Boolean);
-    setDealtCards(shuffle(cardsToDeal));
+    const shuffled = shuffle(cardsToDeal);
+    setDealtCards(shuffled);
+    setNightCards([]);
+    setNightActionsCompleted(new Set());
   };
 
   const resetGame = () => {
     setDealtCards([]);
+    setNightCards([]);
+    setNightActionsCompleted(new Set());
   };
 
-  const value = {
+  const initNightPhase = () => {
+    setNightCards([...dealtCards]);
+    // Pre-complete players whose starting role has no night action (Villager, Hunter, Tanner)
+    const preComplete = new Set<number>();
+    for (let i = 0; i < playerCount; i++) {
+      if (dealtCards[i]?.nightOrder === null) {
+        preComplete.add(i);
+      }
+    }
+    setNightActionsCompleted(preComplete);
+  };
+
+  const swapNightCards = (i: number, j: number) => {
+    setNightCards(prev => {
+      const next = [...prev];
+      [next[i], next[j]] = [next[j], next[i]];
+      return next;
+    });
+  };
+
+  const markNightActionComplete = (playerIdx: number) => {
+    setNightActionsCompleted(prev => new Set([...prev, playerIdx]));
+  };
+
+  const value: GameState = {
     playerCount,
     playerNames,
     selectedCardIds,
     dealtCards,
+    nightCards,
+    nightActionsCompleted,
     setPlayerCount,
     setPlayerName,
     toggleCard,
     setCards,
     deal,
     resetGame,
+    initNightPhase,
+    swapNightCards,
+    markNightActionComplete,
   };
 
   return <GameContext.Provider value={value}>{children}</GameContext.Provider>;

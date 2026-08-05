@@ -4,6 +4,7 @@ import { useGame, getDisplayName } from '@/store/game-store';
 import { RoleDef } from '@/lib/game-data';
 import { Button } from '@/components/ui/button';
 import { RulebookDrawer } from '@/components/RulebookDrawer';
+import { NightActionScreen } from '@/components/NightActionScreen';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Eye, EyeOff, Moon, Redo, Users, User, Target, Shuffle,
@@ -233,9 +234,11 @@ interface RevealBoardProps {
   dealtCards:  RoleDef[];
   onPlayAgain: () => void;
   onSetup:     () => void;
+  onNightAction: () => void;
+  nightActionsDone: number;
 }
 
-function RevealBoard({ playerCount, playerNames, onPlayAgain, onSetup }: RevealBoardProps) {
+function RevealBoard({ playerCount, playerNames, onPlayAgain, onSetup, onNightAction, nightActionsDone }: RevealBoardProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ w: 320, h: 500 });
 
@@ -400,24 +403,42 @@ function RevealBoard({ playerCount, playerNames, onPlayAgain, onSetup }: RevealB
       </div>
 
       {/* Action bar */}
-      <div className="shrink-0 flex gap-2 px-4 py-3 border-t border-border/30 bg-background/90 backdrop-blur-md">
+      <div className="shrink-0 flex flex-col gap-2 px-4 py-3 border-t border-border/30 bg-background/90 backdrop-blur-md">
+        {/* Night Action button — primary CTA */}
         <Button
-          size="sm"
-          onClick={onPlayAgain}
-          className="flex-1 font-serif tracking-wider bg-primary text-primary-foreground hover:bg-primary/90 shadow-[0_0_12px_rgba(212,175,55,0.25)]"
+          onClick={onNightAction}
+          className="w-full h-12 font-serif tracking-wider bg-primary text-primary-foreground hover:bg-primary/90 shadow-[0_0_18px_rgba(212,175,55,0.35)] hover:shadow-[0_0_28px_rgba(212,175,55,0.5)] transition-all"
         >
-          <Redo className="w-3.5 h-3.5 mr-1.5" />
-          Play Again
+          <Moon className="w-4 h-4 mr-2" />
+          Perform Night Action
+          {nightActionsDone > 0 && (
+            <span className="ml-2 text-xs bg-primary-foreground/20 rounded-full px-1.5 py-0.5">
+              {nightActionsDone}
+            </span>
+          )}
         </Button>
-        <Button
-          size="sm"
-          variant="outline"
-          onClick={onSetup}
-          className="flex-1 font-serif tracking-wider border-border/50 text-foreground/65 hover:bg-card hover:text-foreground"
-        >
-          <Settings className="w-3.5 h-3.5 mr-1.5" />
-          Change Setup
-        </Button>
+
+        {/* Secondary actions */}
+        <div className="flex gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={onPlayAgain}
+            className="flex-1 font-serif tracking-wider border-border/50 text-foreground/65 hover:bg-card hover:text-foreground"
+          >
+            <Redo className="w-3.5 h-3.5 mr-1.5" />
+            Play Again
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={onSetup}
+            className="flex-1 font-serif tracking-wider border-border/50 text-foreground/65 hover:bg-card hover:text-foreground"
+          >
+            <Settings className="w-3.5 h-3.5 mr-1.5" />
+            Change Setup
+          </Button>
+        </div>
       </div>
     </motion.div>
   );
@@ -426,10 +447,11 @@ function RevealBoard({ playerCount, playerNames, onPlayAgain, onSetup }: RevealB
 // ─── Main page ────────────────────────────────────────────────────────────────
 export default function DealPage() {
   const [, setLocation] = useLocation();
-  const { playerCount, playerNames, dealtCards, deal, resetGame } = useGame();
+  const { playerCount, playerNames, dealtCards, deal, resetGame, initNightPhase, nightActionsCompleted } = useGame();
 
   const [currentPlayerIndex, setCurrentPlayerIndex] = useState(0);
   const [step, setStep] = useState<DealStep>('waiting');
+  const [showNightAction, setShowNightAction] = useState(false);
 
   // Redirect if no cards dealt (e.g. page refresh)
   useEffect(() => {
@@ -452,7 +474,10 @@ export default function DealPage() {
       setStep('waiting');
     }
   };
-  const handleRevealBoard = () => setStep('reveal-board');
+  const handleRevealBoard = () => {
+    initNightPhase();
+    setStep('reveal-board');
+  };
   const handlePlayAgain   = () => {
     deal();                      // reshuffle same cards
     setCurrentPlayerIndex(0);
@@ -462,6 +487,8 @@ export default function DealPage() {
     resetGame();
     setLocation('/');
   };
+  const handleOpenNightAction  = () => setShowNightAction(true);
+  const handleCloseNightAction = () => setShowNightAction(false);
 
   // ── render ───────────────────────────────────────────────────────────────────
   return (
@@ -513,13 +540,22 @@ export default function DealPage() {
 
       {/* ── REVEAL BOARD (full-width scrollable) ── */}
       {step === 'reveal-board' && (
-        <RevealBoard
-          playerCount={playerCount}
-          playerNames={playerNames}
-          dealtCards={dealtCards}
-          onPlayAgain={handlePlayAgain}
-          onSetup={handleSetup}
-        />
+        <>
+          <RevealBoard
+            playerCount={playerCount}
+            playerNames={playerNames}
+            dealtCards={dealtCards}
+            onPlayAgain={handlePlayAgain}
+            onSetup={handleSetup}
+            onNightAction={handleOpenNightAction}
+            nightActionsDone={nightActionsCompleted.size}
+          />
+          <AnimatePresence>
+            {showNightAction && (
+              <NightActionScreen onClose={handleCloseNightAction} />
+            )}
+          </AnimatePresence>
+        </>
       )}
 
       {/* ── CARD FLOW STEPS ── */}
