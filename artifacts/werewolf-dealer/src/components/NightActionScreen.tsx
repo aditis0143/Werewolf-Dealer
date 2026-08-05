@@ -21,8 +21,7 @@ import { RoleDef } from '@/lib/game-data';
 import { Button } from '@/components/ui/button';
 import {
   Eye, EyeOff, Moon, Shuffle, RefreshCw, Wine, Glasses, Layers,
-  Skull, User, Users, Shield, Target, UserX, CheckCircle, Lock,
-  ChevronRight,
+  Skull, User, Users, Shield, Target, UserX, CheckCircle, ChevronRight,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -128,30 +127,6 @@ function SelectableCard({
   );
 }
 
-// ─── Night-order helpers ──────────────────────────────────────────────────────
-
-/**
- * Returns the set of player indices eligible to act next —
- * those whose startingNightOrder equals the lowest incomplete nightOrder.
- */
-function getEligiblePlayerIndices(
-  playerCount: number,
-  dealtCards: RoleDef[],
-  nightActionsCompleted: Set<number>,
-): Set<number> {
-  const incomplete: { idx: number; order: number }[] = [];
-  for (let i = 0; i < playerCount; i++) {
-    if (nightActionsCompleted.has(i)) continue;
-    const order = dealtCards[i]?.nightOrder;
-    if (order !== null && order !== undefined) {
-      incomplete.push({ idx: i, order });
-    }
-  }
-  if (incomplete.length === 0) return new Set();
-  const minOrder = Math.min(...incomplete.map(e => e.order));
-  return new Set(incomplete.filter(e => e.order === minOrder).map(e => e.idx));
-}
-
 /** Human-readable seat label (1-indexed, no player name). */
 const seatLabel = (idx: number) => `Seat ${idx + 1}`;
 
@@ -196,22 +171,25 @@ export function NightActionScreen({ onClose }: Props) {
 
   const werewolfIndices = () => indicesForRole('Werewolf');
 
-  /** Player indices currently eligible to act (current night-order slot). */
-  const eligibleNow = getEligiblePlayerIndices(playerCount, dealtCards, nightActionsCompleted);
-
   const allDone = Array.from({ length: playerCount }, (_, i) => i)
     .every(i => nightActionsCompleted.has(i));
 
   // ── action handlers ────────────────────────────────────────────────────────
 
-  /** Mark every player in roleIndices as done, then show completion screen. */
+  /**
+   * Mark the next incomplete player in roleIndices as done, then show the
+   * completion screen. For multi-player roles (Werewolf, Mason) each person
+   * taps the button independently and we mark them off one at a time.
+   */
   const handleDone = (roleIndices: number[], message: string) => {
-    roleIndices.forEach(markNightActionComplete);
+    const next = roleIndices.find(i => !nightActionsCompleted.has(i));
+    if (next !== undefined) markNightActionComplete(next);
     setPhase({ kind: 'complete', message });
   };
 
   const afterPeeking = (roleIndices: number[]) => {
-    roleIndices.forEach(markNightActionComplete);
+    const next = roleIndices.find(i => !nightActionsCompleted.has(i));
+    if (next !== undefined) markNightActionComplete(next);
     setPhase({ kind: 'complete', message: 'You have seen the card(s). Close your eyes and pass the device back.' });
   };
 
@@ -325,67 +303,56 @@ export function NightActionScreen({ onClose }: Props) {
           )}
         </div>
 
-        {/* Role buttons in night order */}
+        {/* Role buttons — always selectable until all instances of that role are done */}
         <div className="w-full flex flex-col gap-2">
-          {nightGroups.map(({ role, card, indices, order }) => {
-            const done     = indices.every(i => nightActionsCompleted.has(i));
-            const eligible = indices.some(i => eligibleNow.has(i));
-            const locked   = !done && !eligible;
-            const fc       = roleFactionIcon(role);
+          {nightGroups.map(({ role, card, indices }) => {
+            const completedCount = indices.filter(i => nightActionsCompleted.has(i)).length;
+            const done = completedCount === indices.length;
+            const fc   = roleFactionIcon(role);
 
             return (
               <button
                 key={role}
                 onClick={() =>
-                  eligible
-                    ? setPhase({ kind: 'action', role, roleIndices: indices })
-                    : undefined
+                  done ? undefined : setPhase({ kind: 'action', role, roleIndices: indices })
                 }
-                disabled={done || locked}
+                disabled={done}
                 className={cn(
                   'w-full rounded-xl border-2 px-4 py-3.5 flex items-center justify-between transition-all',
                   done
                     ? 'border-border/20 bg-card/20 text-muted-foreground/40 cursor-default'
-                    : eligible
-                      ? cn(
-                          'hover:opacity-90 active:scale-[0.98] cursor-pointer',
-                          fc.border, fc.bg,
-                        )
-                      : 'border-border/20 bg-card/15 text-muted-foreground/35 cursor-not-allowed',
+                    : cn('hover:opacity-90 active:scale-[0.98] cursor-pointer', fc.border, fc.bg),
                 )}
               >
-                {/* Left: status indicator + icon + role name */}
+                {/* Left: status dot + icon + role name */}
                 <div className="flex items-center gap-3">
                   {done ? (
                     <CheckCircle className="w-4 h-4 text-green-500/60 shrink-0" />
-                  ) : locked ? (
-                    <Lock className="w-4 h-4 text-muted-foreground/30 shrink-0" />
                   ) : (
                     <div className="w-2 h-2 rounded-full bg-primary animate-pulse shrink-0" />
                   )}
-                  <span className={cn('shrink-0', done || locked ? 'opacity-40' : fc.icon)}>
+                  <span className={cn('shrink-0', done ? 'opacity-40' : fc.icon)}>
                     {getRoleIcon(card.baseRole, 'sm')}
                   </span>
                   <span className="font-serif text-xl">{role}</span>
-                  {order !== null && (
-                    <span className="text-[10px] uppercase tracking-widest text-muted-foreground/50">
-                      #{order}
-                    </span>
-                  )}
                 </div>
 
-                {/* Right: call to action or state label */}
-                {eligible && (
+                {/* Right: progress or call-to-action */}
+                {done ? (
+                  <span className="text-xs text-muted-foreground/40 uppercase tracking-widest">Done</span>
+                ) : indices.length > 1 ? (
+                  /* Multi-player role: show how many have acted */
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-xs text-muted-foreground/60 uppercase tracking-widest">
+                      {completedCount}/{indices.length}
+                    </span>
+                    <ChevronRight className={cn('w-3.5 h-3.5', fc.icon)} />
+                  </div>
+                ) : (
                   <div className={cn('flex items-center gap-1 text-xs', fc.icon)}>
                     <span className="uppercase tracking-widest">This is me</span>
                     <ChevronRight className="w-3.5 h-3.5" />
                   </div>
-                )}
-                {done && (
-                  <span className="text-xs text-muted-foreground/40 uppercase tracking-widest">Done</span>
-                )}
-                {locked && (
-                  <span className="text-xs text-muted-foreground/30 uppercase tracking-widest">Waiting…</span>
                 )}
               </button>
             );
