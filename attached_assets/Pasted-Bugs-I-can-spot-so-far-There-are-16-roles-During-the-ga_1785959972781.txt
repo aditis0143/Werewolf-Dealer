@@ -1,0 +1,32 @@
+Bugs I can spot so far:
+There are 16 roles. During the game, 3 cards must remain in the middle. This mean the max amount of players are 13. THe player count only allows me to go to 10? Please change it to 13.
+When I've started the game and roles are being revealed to players, the role descriptions/explanations cannot be fully viewed! I am looking at the Minion card, and the explanation is cut off because the card is too small to display the full explanation. Also, the Troublemaker label on the card gets cut off because the card is too small! This happens with multiple of the role labels/descriptions on the cards. Fix this. No text should be cut off.
+You do realize... the Seer, Shapeshifter, Robber, Troublemaker, etc need to be able to see and change people's cards right? How are they supposed to do that!
+"Redesign the main game screen into an interactive night-phase table layout:
+Visual Table Setup:
+Layout player cards in a clear circle around the screen, displaying each player's name on their face-down card slot.
+Place the 3 'Center Cards' face-down in the middle of the circle.
+Secret Action Trigger:
+Create a 'Perform Night Action' button on screen.
+When a player clicks it, prompt them to select their name from a dropdown (or pass the device to them) and enter a temporary 4-digit PIN or click 'I am [Name]' to open their private action screen.
+Role-Restricted Action Rules:
+Seer: Can click and briefly reveal either 1 player's card OR 2 center cards. Block any further card picks.
+Robber: Can click 1 player's card to swap it with their own, then view their new card.
+Troublemaker: Can click 2 other players' cards to swap their positions without revealing their contents.
+Drunk: Can click 1 center card to swap with their own without viewing the new card.
+Shapeshifter: Can click 1 player card to view it and adopt its interaction logic.
+Lone Werewolf: If enabled/alone, can view 1 center card.
+Villager / Mason / Minion / Insomniac / Tanner / Hunter: Display a screen stating their passive role status (or showing fellow Masons/Werewolves) with no card-swapping mechanics.
+State Management:
+Ensure card positions and identities update silently in the background when swapped, so the true final arrangement is preserved for the end reveal."
+
+____________________
+
+"Update the setup phase to include custom player names:Name Input Stage:Once the number of players (N) is selected, render N text input fields allowing users to type each player's name (e.g., 'Alice', 'Bob', 'Charlie').Default the text fields to 'Player 1', 'Player 2', etc., if left blank.Pass-and-Play Integration:Update all pass-and-play prompts and role reveal screens to use the custom player names instead of generic numbers (e.g., 'Hand device to Alice', 'Alice, your secret role is...')."
+"Add the Insomniac check and finalize the night-to-day transition:
+Insomniac Check:
+Allow the Insomniac (or Shapeshifter-Insomniac) to log into the action screen near the end of the night to view whichever card currently sits face-down in front of their slot after all swaps have occurred.
+Night Action Audio Sync:
+Add a visible status indicator showing which roles have completed their night actions to help players stay aligned with the external Gamemaster app's audio track.
+Final Reveal Board Sync:
+Ensure the final 'End Night & Reveal Cards' board displays the updated end-of-game card locations (after all Robber, Troublemaker, and Drunk swaps) alongside original starting roles."
