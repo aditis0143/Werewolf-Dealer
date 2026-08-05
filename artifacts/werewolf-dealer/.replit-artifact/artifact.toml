@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/"
+title = "One Night Werewolf Dealer"
+description = "A pass-and-play digital card dealer for One Night Ultimate Werewolf. Players configure the game by selecting a player count and role cards (with N+3 validation), choose from preset scenario setups drawn from the official rulebook, and privately receive their dealt role one device-pass at a time. Includes a full rulebook and role guide drawer."
+version = "1.0.0"
+id = "artifacts/werewolf-dealer"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 19404
+
+[services.development]
+run = "pnpm --filter @workspace/werewolf-dealer run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/werewolf-dealer", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/werewolf-dealer/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "19404"
+BASE_PATH = "/"
