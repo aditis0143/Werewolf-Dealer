@@ -16,11 +16,11 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useGame } from '@/store/game-store';
-import { RoleDef } from '@/lib/game-data';
+import { RoleDef, BASE_ROLES } from '@/lib/game-data';
 import { Button } from '@/components/ui/button';
 import {
   Eye, EyeOff, Moon, Shuffle, RefreshCw, Wine, Glasses, Layers,
-  Skull, User, Users, Shield, Target, UserX, CheckCircle, ChevronRight,
+  Skull, User, Users, Shield, Target, UserX, CheckCircle, HelpCircle,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -130,13 +130,24 @@ function SelectableCard({
 const playerName = (playerNames: string[], idx: number) =>
   playerNames[idx]?.trim() || `Player ${idx + 1}`;
 
+// ─── Fixed role display order ─────────────────────────────────────────────────
+// Every role is always shown regardless of what's in the current game,
+// so the selection screen looks identical every game and leaks no information
+// about which cards ended up in the center.
+
+const DISPLAY_ROLE_ORDER = [
+  'Werewolf', 'Seer', 'Robber', 'Troublemaker', 'Drunk',
+  'Mason', 'Minion', 'Hunter', 'Tanner', 'Villager', 'Insomniac', 'Shapeshifter',
+] as const;
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type NightPhase =
   | { kind: 'select' }
   | { kind: 'action'; role: string; roleIndices: number[] }
   | { kind: 'peeking'; roleIndices: number[]; cards: { label: string; card: RoleDef }[] }
-  | { kind: 'complete'; message: string };
+  | { kind: 'complete'; message: string }
+  | { kind: 'inactive' };
 
 interface Props {
   onClose: () => void;
@@ -263,41 +274,14 @@ export function NightActionScreen({ onClose }: Props) {
   // ── select screen (role-based login) ──────────────────────────────────────
 
   const renderSelect = () => {
-    // Build unique role groups from player slots, sorted by nightOrder ascending
-    type RoleGroup = { role: string; card: RoleDef; indices: number[]; order: number | null };
-    const roleMap = new Map<string, RoleGroup>();
-
+    // Build a lookup: baseRole → player indices holding that role (players only, not center)
+    const roleIndicesMap = new Map<string, number[]>();
     for (let i = 0; i < playerCount; i++) {
       const card = dealtCards[i];
       if (!card) continue;
-      if (roleMap.has(card.baseRole)) {
-        roleMap.get(card.baseRole)!.indices.push(i);
-      } else {
-        roleMap.set(card.baseRole, {
-          role: card.baseRole,
-          card,
-          indices: [i],
-          order: card.nightOrder ?? null,
-        });
-      }
+      const existing = roleIndicesMap.get(card.baseRole) ?? [];
+      roleIndicesMap.set(card.baseRole, [...existing, i]);
     }
-
-    // Only roles that wake during the night (nightOrder !== null)
-    const nightGroups = [...roleMap.values()]
-      .filter(g => g.order !== null)
-      .sort((a, b) => (a.order ?? 99) - (b.order ?? 99));
-
-    // ── Night-order enforcement ──────────────────────────────────────────────
-    // Find the lowest nightOrder among role groups that still have incomplete players.
-    // Only that exact nightOrder is allowed to act; earlier orders must finish first.
-    const incompleteGroups = nightGroups.filter(g => {
-      const completedCount = g.indices.filter(i => nightActionsCompleted.has(i)).length;
-      return completedCount < g.indices.length;
-    });
-    const currentOrder: number | null =
-      incompleteGroups.length > 0
-        ? Math.min(...incompleteGroups.map(g => g.order!))
-        : null;
 
     return (
       <motion.div
@@ -311,97 +295,79 @@ export function NightActionScreen({ onClose }: Props) {
         <div className="text-center">
           <Moon className="w-10 h-10 text-primary mx-auto mb-3 drop-shadow-[0_0_12px_rgba(212,175,55,0.5)]" />
           <h1 className="font-serif text-3xl text-foreground mb-1">Night Actions</h1>
-          {allDone ? (
-            <p className="text-sm text-green-400">All night actions complete!</p>
-          ) : (
-            <p className="text-sm text-muted-foreground">Select your role to begin your action</p>
-          )}
+          <p className="text-sm text-muted-foreground">Select your role to begin your action</p>
         </div>
 
-        {/* Role buttons — only the current night-order role is interactive */}
+        {/* All roles, always, identical appearance — no active/inactive indicators */}
         <div className="w-full flex flex-col gap-2">
-          {nightGroups.map(({ role, card, indices }) => {
-            const completedCount = indices.filter(i => nightActionsCompleted.has(i)).length;
-            const done       = completedCount === indices.length;
-            // Not yet this role's turn: a lower nightOrder is still incomplete
-            const notYetTurn = !done && currentOrder !== null && (card.nightOrder ?? 0) > currentOrder;
-            const isDisabled = done || notYetTurn;
-            const fc         = roleFactionIcon(role);
+          {DISPLAY_ROLE_ORDER.map(role => {
+            const roleDef = BASE_ROLES.find(r => r.baseRole === role)!;
+            const fc      = roleFactionIcon(role);
+            const indices = roleIndicesMap.get(role) ?? [];
 
             return (
               <button
                 key={role}
-                onClick={() =>
-                  isDisabled ? undefined : setPhase({ kind: 'action', role, roleIndices: indices })
-                }
-                disabled={isDisabled}
+                onClick={() => {
+                  if (indices.length === 0) {
+                    // Role not dealt to any player seat — show generic inactive message
+                    setPhase({ kind: 'inactive' });
+                  } else {
+                    setPhase({ kind: 'action', role, roleIndices: indices });
+                  }
+                }}
                 className={cn(
-                  'w-full rounded-xl border-2 px-4 py-3.5 flex items-center justify-between transition-all',
-                  done
-                    ? 'border-border/20 bg-card/20 text-muted-foreground/40 cursor-default'
-                    : notYetTurn
-                      ? 'border-border/20 bg-card/15 text-muted-foreground/30 cursor-not-allowed'
-                      : cn('hover:opacity-90 active:scale-[0.98] cursor-pointer', fc.border, fc.bg),
+                  'w-full rounded-xl border-2 px-4 py-3.5 flex items-center gap-3',
+                  'transition-all hover:opacity-90 active:scale-[0.98] cursor-pointer',
+                  fc.border, fc.bg,
                 )}
               >
-                {/* Left: status icon + role icon + role name */}
-                <div className="flex items-center gap-3">
-                  {done ? (
-                    <CheckCircle className="w-4 h-4 text-green-500/60 shrink-0" />
-                  ) : notYetTurn ? (
-                    <Moon className="w-4 h-4 text-muted-foreground/30 shrink-0" />
-                  ) : (
-                    <div className="w-2 h-2 rounded-full bg-primary animate-pulse shrink-0" />
-                  )}
-                  <span className={cn('shrink-0', done || notYetTurn ? 'opacity-30' : fc.icon)}>
-                    {getRoleIcon(card.baseRole, 'sm')}
-                  </span>
-                  <span className={cn('font-serif text-xl', notYetTurn && 'opacity-40')}>{role}</span>
-                </div>
-
-                {/* Right: progress or call-to-action */}
-                {done ? (
-                  <span className="text-xs text-muted-foreground/40 uppercase tracking-widest">Done</span>
-                ) : notYetTurn ? (
-                  <span className="text-xs text-muted-foreground/30 uppercase tracking-widest">Waiting…</span>
-                ) : indices.length > 1 ? (
-                  /* Multi-player role: show how many have acted */
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-xs text-muted-foreground/60 uppercase tracking-widest">
-                      {completedCount}/{indices.length}
-                    </span>
-                    <ChevronRight className={cn('w-3.5 h-3.5', fc.icon)} />
-                  </div>
-                ) : (
-                  <div className={cn('flex items-center gap-1 text-xs', fc.icon)}>
-                    <span className="uppercase tracking-widest">This is me</span>
-                    <ChevronRight className="w-3.5 h-3.5" />
-                  </div>
-                )}
+                <span className={cn('shrink-0', fc.icon)}>
+                  {getRoleIcon(roleDef.baseRole, 'sm')}
+                </span>
+                <span className="font-serif text-xl">{role}</span>
               </button>
             );
           })}
         </div>
 
-        {allDone ? (
-          <Button
-            onClick={onClose}
-            className="w-full h-12 font-serif tracking-wider bg-primary text-primary-foreground"
-          >
-            Return to Table
-          </Button>
-        ) : (
-          <Button
-            variant="ghost"
-            onClick={onClose}
-            className="text-muted-foreground hover:text-foreground"
-          >
-            Cancel
-          </Button>
-        )}
+        <Button
+          variant="ghost"
+          onClick={onClose}
+          className="text-muted-foreground hover:text-foreground"
+        >
+          Cancel
+        </Button>
       </motion.div>
     );
   };
+
+  // ── inactive screen ────────────────────────────────────────────────────────
+
+  const renderInactive = () => (
+    <motion.div
+      key="inactive"
+      initial={{ opacity: 0, scale: 0.96 }}
+      animate={{ opacity: 1, scale: 1 }}
+      exit={{ opacity: 0 }}
+      className="flex flex-col items-center w-full max-w-sm mx-auto px-4 py-6 gap-6 text-center"
+    >
+      <HelpCircle className="w-14 h-14 text-muted-foreground/50" />
+      <div>
+        <p className="font-serif text-xl text-foreground mb-2">Role Not Active</p>
+        <p className="text-sm text-muted-foreground leading-relaxed">
+          This role is not active this game.
+        </p>
+      </div>
+      <Button
+        onClick={() => setPhase({ kind: 'select' })}
+        variant="outline"
+        className="w-full h-12 font-serif tracking-wider border-border/50"
+      >
+        ← Back to Night Actions
+      </Button>
+    </motion.div>
+  );
 
   // ── action screen ──────────────────────────────────────────────────────────
 
@@ -758,6 +724,7 @@ export function NightActionScreen({ onClose }: Props) {
           {phase.kind === 'action'   && renderAction(phase.role, phase.roleIndices)}
           {phase.kind === 'peeking'  && renderPeeking(phase)}
           {phase.kind === 'complete' && renderComplete(phase)}
+          {phase.kind === 'inactive' && renderInactive()}
         </AnimatePresence>
       </div>
     </motion.div>
