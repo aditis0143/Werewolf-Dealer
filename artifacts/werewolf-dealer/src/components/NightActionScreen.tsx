@@ -9,8 +9,7 @@
  * incomplete nightOrder are selectable. This prevents Insomniac from acting
  * before Robber/Troublemaker swaps occur, etc.
  *
- * Swap targets and partner info use seat positions ("Seat 1", "Seat 2" …)
- * so the physical seating arrangement is preserved without leaking names.
+ * Swap targets and partner info use custom player names entered during setup.
  *
  * Flow: select role → action → (peeking) → complete → back to select
  */
@@ -127,8 +126,9 @@ function SelectableCard({
   );
 }
 
-/** Human-readable seat label (1-indexed, no player name). */
-const seatLabel = (idx: number) => `Seat ${idx + 1}`;
+/** Return the player's custom name, falling back to "Player N" if unset. */
+const playerName = (playerNames: string[], idx: number) =>
+  playerNames[idx]?.trim() || `Player ${idx + 1}`;
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -146,9 +146,12 @@ interface Props {
 
 export function NightActionScreen({ onClose }: Props) {
   const {
-    playerCount, dealtCards, nightCards,
+    playerCount, playerNames, dealtCards, nightCards,
     nightActionsCompleted, swapNightCards, markNightActionComplete, initNightPhase,
   } = useGame();
+
+  /** Shorthand: get the custom name for a player index. */
+  const pName = (idx: number) => playerName(playerNames, idx);
 
   // Safety: lazily init nightCards if not yet initialised
   React.useEffect(() => {
@@ -197,7 +200,7 @@ export function NightActionScreen({ onClose }: Props) {
     setPhase({
       kind: 'peeking',
       roleIndices,
-      cards: [{ label: seatLabel(targetIdx), card: currentCard(targetIdx) }],
+      cards: [{ label: pName(targetIdx), card: currentCard(targetIdx) }],
     });
   };
 
@@ -245,7 +248,7 @@ export function NightActionScreen({ onClose }: Props) {
     setPhase({
       kind: 'peeking',
       roleIndices,
-      cards: [{ label: seatLabel(targetIdx), card: currentCard(targetIdx) }],
+      cards: [{ label: pName(targetIdx), card: currentCard(targetIdx) }],
     });
   };
 
@@ -439,6 +442,7 @@ export function NightActionScreen({ onClose }: Props) {
             <SeerAction
               playerIdx={primaryIdx}
               playerCount={playerCount}
+              playerNames={playerNames}
               onPeekPlayer={targetIdx => seerPeekPlayer(roleIndices, targetIdx)}
               onPeekCenter={(c1, c2) => seerPeekCenter(roleIndices, c1, c2)}
             />
@@ -448,7 +452,7 @@ export function NightActionScreen({ onClose }: Props) {
           {role === 'Robber' && (
             <div className="flex flex-col gap-3">
               <p className="text-sm text-foreground/70 text-center">
-                Pick a seat to rob. You'll swap cards and see your new role.
+                Pick a player to rob. You'll swap cards and see your new role.
               </p>
               <div className="flex flex-col gap-2">
                 {Array.from({ length: playerCount }, (_, i) => {
@@ -456,7 +460,7 @@ export function NightActionScreen({ onClose }: Props) {
                   return (
                     <SelectableCard
                       key={i}
-                      label={seatLabel(i)}
+                      label={pName(i)}
                       onClick={() => robberSwap(roleIndices, i)}
                     />
                   );
@@ -470,6 +474,7 @@ export function NightActionScreen({ onClose }: Props) {
             <TroublemakerAction
               playerIdx={primaryIdx}
               playerCount={playerCount}
+              playerNames={playerNames}
               onSwap={(a, b) => troublemakerSwap(roleIndices, a, b)}
             />
           )}
@@ -511,7 +516,7 @@ export function NightActionScreen({ onClose }: Props) {
           {role === 'Shapeshifter' && (
             <div className="flex flex-col gap-3">
               <p className="text-sm text-foreground/70 text-center">
-                Look at one other seat's card and imitate that role (no swap).
+                Look at one other player's card and imitate that role (no swap).
               </p>
               <div className="flex flex-col gap-2">
                 {Array.from({ length: playerCount }, (_, i) => {
@@ -519,7 +524,7 @@ export function NightActionScreen({ onClose }: Props) {
                   return (
                     <SelectableCard
                       key={i}
-                      label={seatLabel(i)}
+                      label={pName(i)}
                       onClick={() => shapeshifterPeek(roleIndices, i)}
                     />
                   );
@@ -542,7 +547,7 @@ export function NightActionScreen({ onClose }: Props) {
                         <div key={si} className="flex items-center gap-3 py-1">
                           <Skull className="w-4 h-4 text-red-400 shrink-0" />
                           <span className="font-serif text-lg text-foreground">
-                            {seatLabel(si)}
+                            {pName(si)}
                             {si === primaryIdx && (
                               <span className="ml-2 text-xs text-red-400/60 uppercase tracking-wider">you</span>
                             )}
@@ -610,7 +615,7 @@ export function NightActionScreen({ onClose }: Props) {
                         <div key={si} className="flex items-center gap-3 py-1">
                           <Users className="w-4 h-4 text-blue-400 shrink-0" />
                           <span className="font-serif text-lg text-foreground">
-                            {seatLabel(si)}
+                            {pName(si)}
                             {si === primaryIdx && (
                               <span className="ml-2 text-xs text-blue-400/60 uppercase tracking-wider">you</span>
                             )}
@@ -649,7 +654,7 @@ export function NightActionScreen({ onClose }: Props) {
                     {werewolfIndices().map(si => (
                       <div key={si} className="flex items-center gap-3 py-1">
                         <Skull className="w-4 h-4 text-red-400 shrink-0" />
-                        <span className="font-serif text-lg text-foreground">{seatLabel(si)}</span>
+                        <span className="font-serif text-lg text-foreground">{pName(si)}</span>
                       </div>
                     ))}
                     <p className="text-xs text-red-400/50 mt-2">
@@ -762,10 +767,11 @@ export function NightActionScreen({ onClose }: Props) {
 // ─── Seer sub-component ───────────────────────────────────────────────────────
 
 function SeerAction({
-  playerIdx, playerCount, onPeekPlayer, onPeekCenter,
+  playerIdx, playerCount, playerNames, onPeekPlayer, onPeekCenter,
 }: {
   playerIdx:     number;
   playerCount:   number;
+  playerNames:   string[];
   onPeekPlayer:  (targetIdx: number) => void;
   onPeekCenter:  (c1: number, c2: number) => void;
 }) {
@@ -789,14 +795,14 @@ function SeerAction({
   if (mode === 'player') {
     return (
       <div className="flex flex-col gap-3">
-        <p className="text-sm text-foreground/70 text-center">Pick a seat to look at:</p>
+        <p className="text-sm text-foreground/70 text-center">Pick a player to look at:</p>
         <div className="flex flex-col gap-2">
           {Array.from({ length: playerCount }, (_, i) => {
             if (i === playerIdx) return null;
             return (
               <SelectableCard
                 key={i}
-                label={seatLabel(i)}
+                label={playerName(playerNames, i)}
                 onClick={() => onPeekPlayer(i)}
               />
             );
@@ -851,10 +857,11 @@ function SeerAction({
 // ─── Troublemaker sub-component ───────────────────────────────────────────────
 
 function TroublemakerAction({
-  playerIdx, playerCount, onSwap,
+  playerIdx, playerCount, playerNames, onSwap,
 }: {
   playerIdx:   number;
   playerCount: number;
+  playerNames: string[];
   onSwap:      (a: number, b: number) => void;
 }) {
   const [first, setFirst] = useState<number | null>(null);
@@ -863,8 +870,8 @@ function TroublemakerAction({
     <div className="flex flex-col gap-3">
       <p className="text-sm text-foreground/70 text-center">
         {first === null
-          ? 'Pick the first seat to swap (not your own):'
-          : 'Now pick the second seat to swap with:'}
+          ? 'Pick the first player to swap (not yourself):'
+          : 'Now pick the second player to swap with:'}
       </p>
       <div className="flex flex-col gap-2">
         {Array.from({ length: playerCount }, (_, i) => {
@@ -872,7 +879,7 @@ function TroublemakerAction({
           return (
             <SelectableCard
               key={i}
-              label={seatLabel(i)}
+              label={playerName(playerNames, i)}
               selected={first === i}
               disabled={first !== null && first === i}
               onClick={() => {
@@ -891,7 +898,7 @@ function TroublemakerAction({
           onClick={() => setFirst(null)}
           className="text-xs text-muted-foreground hover:text-foreground text-center mt-1"
         >
-          ← Pick different first seat
+          ← Pick a different first player
         </button>
       )}
     </div>
