@@ -2,15 +2,21 @@
  * NightActionScreen
  * Full-screen private overlay for a player's night action.
  *
- * Enforces canonical night order: only players whose role's nightOrder equals
- * the lowest nightOrder among incomplete players are eligible to act. This
- * prevents Insomniac from checking before Robber/Troublemaker swaps occur, etc.
+ * Role-based login: players select their own role from a list — no player names
+ * are shown anywhere, preventing the device from revealing who holds which role.
  *
- * Flow: select → action → (peeking) → complete → [closed, back to board]
+ * Night-order enforcement: only roles whose nightOrder equals the lowest
+ * incomplete nightOrder are selectable. This prevents Insomniac from acting
+ * before Robber/Troublemaker swaps occur, etc.
+ *
+ * Swap targets and partner info use seat positions ("Seat 1", "Seat 2" …)
+ * so the physical seating arrangement is preserved without leaking names.
+ *
+ * Flow: select role → action → (peeking) → complete → back to select
  */
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { useGame, getDisplayName } from '@/store/game-store';
+import { useGame } from '@/store/game-store';
 import { RoleDef } from '@/lib/game-data';
 import { Button } from '@/components/ui/button';
 import {
@@ -20,7 +26,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+// ─── Role icon + colours ──────────────────────────────────────────────────────
 
 function getRoleIcon(baseRole: string, size: 'sm' | 'md' | 'lg' = 'md') {
   const cls = size === 'sm' ? 'w-5 h-5' : size === 'lg' ? 'w-12 h-12' : 'w-8 h-8';
@@ -43,10 +49,31 @@ function getRoleIcon(baseRole: string, size: 'sm' | 'md' | 'lg' = 'md') {
 
 function factionBg(faction: RoleDef['faction']) {
   switch (faction) {
-    case 'Werewolf':  return 'from-red-950/80 to-background border-red-700/50 text-red-300';
-    case 'Village':   return 'from-blue-950/80 to-background border-blue-700/40 text-blue-300';
-    case 'Tanner':    return 'from-orange-950/80 to-background border-orange-700/40 text-orange-300';
-    default:          return 'from-purple-950/80 to-background border-purple-700/40 text-purple-300';
+    case 'Werewolf': return 'from-red-950/80 to-background border-red-700/50 text-red-300';
+    case 'Village':  return 'from-blue-950/80 to-background border-blue-700/40 text-blue-300';
+    case 'Tanner':   return 'from-orange-950/80 to-background border-orange-700/40 text-orange-300';
+    default:         return 'from-purple-950/80 to-background border-purple-700/40 text-purple-300';
+  }
+}
+
+function roleFactionIcon(role: string): { border: string; icon: string; bg: string } {
+  switch (role) {
+    case 'Werewolf':
+    case 'Minion':
+      return { border: 'border-red-700/50',    icon: 'text-red-400',    bg: 'bg-red-950/30'    };
+    case 'Tanner':
+      return { border: 'border-orange-700/40', icon: 'text-orange-400', bg: 'bg-orange-950/30' };
+    case 'Seer':
+    case 'Robber':
+    case 'Troublemaker':
+    case 'Drunk':
+    case 'Insomniac':
+    case 'Villager':
+    case 'Hunter':
+    case 'Mason':
+      return { border: 'border-blue-700/40',   icon: 'text-blue-400',   bg: 'bg-blue-950/30'   };
+    default:
+      return { border: 'border-purple-700/40', icon: 'text-purple-400', bg: 'bg-purple-950/30' };
   }
 }
 
@@ -72,7 +99,7 @@ function PeekCard({ card, label }: { card: RoleDef; label: string }) {
   );
 }
 
-// ─── Selectable card tile ─────────────────────────────────────────────────────
+// ─── Selectable seat / center tile ───────────────────────────────────────────
 
 function SelectableCard({
   label, onClick, selected, disabled,
@@ -104,9 +131,8 @@ function SelectableCard({
 // ─── Night-order helpers ──────────────────────────────────────────────────────
 
 /**
- * Returns the set of player indices that are eligible to act next —
- * those whose starting nightOrder equals the lowest incomplete nightOrder.
- * Players pre-completed (null nightOrder) are already in nightActionsCompleted.
+ * Returns the set of player indices eligible to act next —
+ * those whose startingNightOrder equals the lowest incomplete nightOrder.
  */
 function getEligiblePlayerIndices(
   playerCount: number,
@@ -126,13 +152,16 @@ function getEligiblePlayerIndices(
   return new Set(incomplete.filter(e => e.order === minOrder).map(e => e.idx));
 }
 
+/** Human-readable seat label (1-indexed, no player name). */
+const seatLabel = (idx: number) => `Seat ${idx + 1}`;
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type NightPhase =
   | { kind: 'select' }
-  | { kind: 'action'; playerIdx: number }
-  | { kind: 'peeking'; playerIdx: number; cards: { label: string; card: RoleDef }[] }
-  | { kind: 'complete'; playerIdx: number; message: string };
+  | { kind: 'action'; role: string; roleIndices: number[] }
+  | { kind: 'peeking'; roleIndices: number[]; cards: { label: string; card: RoleDef }[] }
+  | { kind: 'complete'; message: string };
 
 interface Props {
   onClose: () => void;
@@ -142,11 +171,11 @@ interface Props {
 
 export function NightActionScreen({ onClose }: Props) {
   const {
-    playerCount, playerNames, dealtCards, nightCards,
+    playerCount, dealtCards, nightCards,
     nightActionsCompleted, swapNightCards, markNightActionComplete, initNightPhase,
   } = useGame();
 
-  // Lazily init nightCards on first open
+  // Safety: lazily init nightCards if not yet initialised
   React.useEffect(() => {
     if (nightCards.length === 0 && dealtCards.length > 0) {
       initNightPhase();
@@ -157,23 +186,17 @@ export function NightActionScreen({ onClose }: Props) {
 
   // ── derived helpers ────────────────────────────────────────────────────────
 
-  const startingRole = (idx: number) => dealtCards[idx]?.baseRole ?? '';
-  const currentCard  = (idx: number) => nightCards[idx] ?? dealtCards[idx];
-  const centerCard   = (i: number)   => nightCards[playerCount + i] ?? dealtCards[playerCount + i];
+  const currentCard = (idx: number) => nightCards[idx] ?? dealtCards[idx];
+  const centerCard  = (i: number)   => nightCards[playerCount + i] ?? dealtCards[playerCount + i];
 
-  const werewolfPartners = (self: number) =>
+  /** All player indices with this starting role. */
+  const indicesForRole = (role: string) =>
     Array.from({ length: playerCount }, (_, i) => i)
-      .filter(i => i !== self && dealtCards[i]?.baseRole === 'Werewolf');
+      .filter(i => dealtCards[i]?.baseRole === role);
 
-  const masonPartners = (self: number) =>
-    Array.from({ length: playerCount }, (_, i) => i)
-      .filter(i => i !== self && dealtCards[i]?.baseRole === 'Mason');
+  const werewolfIndices = () => indicesForRole('Werewolf');
 
-  const werewolfIndices = () =>
-    Array.from({ length: playerCount }, (_, i) => i)
-      .filter(i => dealtCards[i]?.baseRole === 'Werewolf');
-
-  /** Players eligible to act right now (current night-order group) */
+  /** Player indices currently eligible to act (current night-order slot). */
   const eligibleNow = getEligiblePlayerIndices(playerCount, dealtCards, nightActionsCompleted);
 
   const allDone = Array.from({ length: playerCount }, (_, i) => i)
@@ -181,28 +204,29 @@ export function NightActionScreen({ onClose }: Props) {
 
   // ── action handlers ────────────────────────────────────────────────────────
 
-  const handleDone = (playerIdx: number, message: string) => {
-    markNightActionComplete(playerIdx);
-    setPhase({ kind: 'complete', playerIdx, message });
+  /** Mark every player in roleIndices as done, then show completion screen. */
+  const handleDone = (roleIndices: number[], message: string) => {
+    roleIndices.forEach(markNightActionComplete);
+    setPhase({ kind: 'complete', message });
   };
 
-  const afterPeeking = (playerIdx: number) => {
-    markNightActionComplete(playerIdx);
-    setPhase({ kind: 'complete', playerIdx, message: 'You have seen the card(s). Close your eyes and pass the device back.' });
+  const afterPeeking = (roleIndices: number[]) => {
+    roleIndices.forEach(markNightActionComplete);
+    setPhase({ kind: 'complete', message: 'You have seen the card(s). Close your eyes and pass the device back.' });
   };
 
-  const seerPeekPlayer = (playerIdx: number, targetIdx: number) => {
+  const seerPeekPlayer = (roleIndices: number[], targetIdx: number) => {
     setPhase({
       kind: 'peeking',
-      playerIdx,
-      cards: [{ label: getDisplayName(playerNames, targetIdx), card: currentCard(targetIdx) }],
+      roleIndices,
+      cards: [{ label: seatLabel(targetIdx), card: currentCard(targetIdx) }],
     });
   };
 
-  const seerPeekCenter = (playerIdx: number, c1: number, c2: number) => {
+  const seerPeekCenter = (roleIndices: number[], c1: number, c2: number) => {
     setPhase({
       kind: 'peeking',
-      playerIdx,
+      roleIndices,
       cards: [
         { label: `Center ${['I', 'II', 'III'][c1]}`, card: centerCard(c1) },
         { label: `Center ${['I', 'II', 'III'][c2]}`, card: centerCard(c2) },
@@ -210,75 +234,77 @@ export function NightActionScreen({ onClose }: Props) {
     });
   };
 
-  const robberSwap = (playerIdx: number, targetIdx: number) => {
-    // Read the target's current card BEFORE the swap — that's what the robber picks up
-    const newCard = nightCards[targetIdx] ?? dealtCards[targetIdx];
+  const robberSwap = (roleIndices: number[], targetIdx: number) => {
+    const playerIdx = roleIndices[0];
+    const newCard   = nightCards[targetIdx] ?? dealtCards[targetIdx];
     swapNightCards(playerIdx, targetIdx);
     setPhase({
       kind: 'peeking',
-      playerIdx,
+      roleIndices,
       cards: [{ label: 'Your new role', card: newCard }],
     });
   };
 
-  const troublemakerSwap = (playerIdx: number, a: number, b: number) => {
+  const troublemakerSwap = (roleIndices: number[], a: number, b: number) => {
     swapNightCards(a, b);
-    handleDone(playerIdx, 'The swap is done — only you know what changed.');
+    handleDone(roleIndices, 'The swap is done — only you know what changed.');
   };
 
-  const drunkSwap = (playerIdx: number, centerIdx: number) => {
-    swapNightCards(playerIdx, playerCount + centerIdx);
-    handleDone(playerIdx, "Your card has been swapped with a center card. You don't know your new role.");
+  const drunkSwap = (roleIndices: number[], centerIdx: number) => {
+    swapNightCards(roleIndices[0], playerCount + centerIdx);
+    handleDone(roleIndices, "Your card has been swapped with a center card. You don't know your new role.");
   };
 
-  const insomniacPeek = (playerIdx: number) => {
+  const insomniacPeek = (roleIndices: number[]) => {
     setPhase({
       kind: 'peeking',
-      playerIdx,
-      cards: [{ label: 'Your current card', card: currentCard(playerIdx) }],
+      roleIndices,
+      cards: [{ label: 'Your current card', card: currentCard(roleIndices[0]) }],
     });
   };
 
-  const shapeshifterPeek = (playerIdx: number, targetIdx: number) => {
+  const shapeshifterPeek = (roleIndices: number[], targetIdx: number) => {
     setPhase({
       kind: 'peeking',
-      playerIdx,
-      cards: [{ label: getDisplayName(playerNames, targetIdx), card: currentCard(targetIdx) }],
+      roleIndices,
+      cards: [{ label: seatLabel(targetIdx), card: currentCard(targetIdx) }],
     });
   };
 
-  const werewolfPeekCenter = (playerIdx: number, centerIdx: number) => {
+  const werewolfPeekCenter = (roleIndices: number[], centerIdx: number) => {
     setPhase({
       kind: 'peeking',
-      playerIdx,
+      roleIndices,
       cards: [{ label: `Center ${['I', 'II', 'III'][centerIdx]}`, card: centerCard(centerIdx) }],
     });
   };
 
-  // ── render ─────────────────────────────────────────────────────────────────
+  // ── select screen (role-based login) ──────────────────────────────────────
 
   const renderSelect = () => {
-    // Group players into ordered slots for display
-    const orderedGroups: { order: number | null; indices: number[] }[] = [];
-    const seen = new Set<number | null>();
-    const sorted = Array.from({ length: playerCount }, (_, i) => ({
-      idx: i,
-      order: dealtCards[i]?.nightOrder ?? null,
-    })).sort((a, b) => {
-      if (a.order === null && b.order === null) return 0;
-      if (a.order === null) return 1;
-      if (b.order === null) return -1;
-      return a.order - b.order;
-    });
+    // Build unique role groups from player slots, sorted by nightOrder ascending
+    type RoleGroup = { role: string; card: RoleDef; indices: number[]; order: number | null };
+    const roleMap = new Map<string, RoleGroup>();
 
-    for (const { idx, order } of sorted) {
-      if (!seen.has(order)) {
-        seen.add(order);
-        orderedGroups.push({ order, indices: [idx] });
+    for (let i = 0; i < playerCount; i++) {
+      const card = dealtCards[i];
+      if (!card) continue;
+      if (roleMap.has(card.baseRole)) {
+        roleMap.get(card.baseRole)!.indices.push(i);
       } else {
-        orderedGroups.find(g => g.order === order)!.indices.push(idx);
+        roleMap.set(card.baseRole, {
+          role: card.baseRole,
+          card,
+          indices: [i],
+          order: card.nightOrder ?? null,
+        });
       }
     }
+
+    // Only roles that wake during the night (nightOrder !== null)
+    const nightGroups = [...roleMap.values()]
+      .filter(g => g.order !== null)
+      .sort((a, b) => (a.order ?? 99) - (b.order ?? 99));
 
     return (
       <motion.div
@@ -294,63 +320,76 @@ export function NightActionScreen({ onClose }: Props) {
           <h1 className="font-serif text-3xl text-foreground mb-1">Night Actions</h1>
           {allDone ? (
             <p className="text-sm text-green-400">All night actions complete!</p>
-          ) : eligibleNow.size > 0 ? (
-            <p className="text-sm text-muted-foreground">
-              Acting now: <span className="text-primary font-semibold">
-                {[...eligibleNow].map(i => getDisplayName(playerNames, i)).join(' & ')}
-              </span>
-            </p>
           ) : (
-            <p className="text-sm text-muted-foreground">Select a player</p>
+            <p className="text-sm text-muted-foreground">Select your role to begin your action</p>
           )}
         </div>
 
-        {/* Players in night order */}
+        {/* Role buttons in night order */}
         <div className="w-full flex flex-col gap-2">
-          {orderedGroups.map(({ order, indices }) =>
-            indices.map(i => {
-              const name = getDisplayName(playerNames, i);
-              const done = nightActionsCompleted.has(i);
-              const eligible = eligibleNow.has(i);
-              const locked = !done && !eligible;
+          {nightGroups.map(({ role, card, indices, order }) => {
+            const done     = indices.every(i => nightActionsCompleted.has(i));
+            const eligible = indices.some(i => eligibleNow.has(i));
+            const locked   = !done && !eligible;
+            const fc       = roleFactionIcon(role);
 
-              return (
-                <button
-                  key={i}
-                  onClick={() => eligible ? setPhase({ kind: 'action', playerIdx: i }) : undefined}
-                  disabled={done || locked}
-                  className={cn(
-                    'w-full rounded-xl border-2 px-5 py-4 flex items-center justify-between transition-all',
-                    done
-                      ? 'border-border/20 bg-card/20 text-muted-foreground/40 cursor-default'
-                      : eligible
-                        ? 'border-primary/60 bg-primary/8 text-foreground hover:bg-primary/15 active:scale-[0.98] cursor-pointer'
-                        : 'border-border/20 bg-card/15 text-muted-foreground/35 cursor-not-allowed',
+            return (
+              <button
+                key={role}
+                onClick={() =>
+                  eligible
+                    ? setPhase({ kind: 'action', role, roleIndices: indices })
+                    : undefined
+                }
+                disabled={done || locked}
+                className={cn(
+                  'w-full rounded-xl border-2 px-4 py-3.5 flex items-center justify-between transition-all',
+                  done
+                    ? 'border-border/20 bg-card/20 text-muted-foreground/40 cursor-default'
+                    : eligible
+                      ? cn(
+                          'hover:opacity-90 active:scale-[0.98] cursor-pointer',
+                          fc.border, fc.bg,
+                        )
+                      : 'border-border/20 bg-card/15 text-muted-foreground/35 cursor-not-allowed',
+                )}
+              >
+                {/* Left: status indicator + icon + role name */}
+                <div className="flex items-center gap-3">
+                  {done ? (
+                    <CheckCircle className="w-4 h-4 text-green-500/60 shrink-0" />
+                  ) : locked ? (
+                    <Lock className="w-4 h-4 text-muted-foreground/30 shrink-0" />
+                  ) : (
+                    <div className="w-2 h-2 rounded-full bg-primary animate-pulse shrink-0" />
                   )}
-                >
-                  <div className="flex items-center gap-3">
-                    {done
-                      ? <CheckCircle className="w-4 h-4 text-green-500/60 shrink-0" />
-                      : locked
-                        ? <Lock className="w-4 h-4 text-muted-foreground/30 shrink-0" />
-                        : <div className="w-2 h-2 rounded-full bg-primary animate-pulse shrink-0" />
-                    }
-                    <span className="font-serif text-xl">{name}</span>
+                  <span className={cn('shrink-0', done || locked ? 'opacity-40' : fc.icon)}>
+                    {getRoleIcon(card.baseRole, 'sm')}
+                  </span>
+                  <span className="font-serif text-xl">{role}</span>
+                  {order !== null && (
+                    <span className="text-[10px] uppercase tracking-widest text-muted-foreground/50">
+                      #{order}
+                    </span>
+                  )}
+                </div>
+
+                {/* Right: call to action or state label */}
+                {eligible && (
+                  <div className={cn('flex items-center gap-1 text-xs', fc.icon)}>
+                    <span className="uppercase tracking-widest">This is me</span>
+                    <ChevronRight className="w-3.5 h-3.5" />
                   </div>
-                  {eligible && (
-                    <div className="flex items-center gap-1 text-primary text-xs">
-                      <span className="uppercase tracking-widest">I am {name}</span>
-                      <ChevronRight className="w-3.5 h-3.5" />
-                    </div>
-                  )}
-                  {done && <span className="text-xs text-muted-foreground/40 uppercase tracking-widest">Done</span>}
-                  {locked && order !== null && (
-                    <span className="text-xs text-muted-foreground/30 uppercase tracking-widest">Waiting…</span>
-                  )}
-                </button>
-              );
-            })
-          )}
+                )}
+                {done && (
+                  <span className="text-xs text-muted-foreground/40 uppercase tracking-widest">Done</span>
+                )}
+                {locked && (
+                  <span className="text-xs text-muted-foreground/30 uppercase tracking-widest">Waiting…</span>
+                )}
+              </button>
+            );
+          })}
         </div>
 
         {allDone ? (
@@ -373,25 +412,32 @@ export function NightActionScreen({ onClose }: Props) {
     );
   };
 
-  const renderAction = (playerIdx: number) => {
-    const role = startingRole(playerIdx);
-    const name = getDisplayName(playerNames, playerIdx);
-    const partners = role === 'Werewolf' ? werewolfPartners(playerIdx) : [];
-    const wolves = werewolfIndices();
-    const isLoneWolf = role === 'Werewolf' && wolves.length === 1;
+  // ── action screen ──────────────────────────────────────────────────────────
+
+  const renderAction = (role: string, roleIndices: number[]) => {
+    const primaryIdx  = roleIndices[0];
+    const wolfIndices = werewolfIndices();
+    const isLoneWolf  = role === 'Werewolf' && wolfIndices.length === 1;
+    // For Werewolf: pack = all wolf seats (including self — shown as "you")
+    // For Mason:    partners = all mason seats
+    const packSeats    = role === 'Werewolf' ? wolfIndices  : [];
+    const masonSeats   = role === 'Mason'    ? roleIndices  : [];
+    const fc           = roleFactionIcon(role);
 
     return (
       <motion.div
-        key={`action-${playerIdx}`}
+        key={`action-${role}`}
         initial={{ opacity: 0, x: 40 }}
         animate={{ opacity: 1, x: 0 }}
         exit={{ opacity: 0, x: -40 }}
         className="flex flex-col items-center w-full max-w-sm mx-auto px-4 py-6 gap-5"
       >
-        {/* Player + role header */}
+        {/* Role header — no player name */}
         <div className="text-center w-full">
-          <p className="text-xs text-muted-foreground uppercase tracking-widest mb-1">{name}'s night action</p>
-          <div className="flex items-center justify-center gap-2 text-primary mb-1">
+          <p className="text-xs text-muted-foreground uppercase tracking-widest mb-2">
+            Your night action
+          </p>
+          <div className={cn('flex items-center justify-center gap-2 mb-1', fc.icon)}>
             {getRoleIcon(role, 'md')}
             <h1 className="font-serif text-3xl text-foreground">{role}</h1>
           </div>
@@ -403,11 +449,10 @@ export function NightActionScreen({ onClose }: Props) {
           {/* ── Seer ── */}
           {role === 'Seer' && (
             <SeerAction
-              playerIdx={playerIdx}
+              playerIdx={primaryIdx}
               playerCount={playerCount}
-              playerNames={playerNames}
-              onPeekPlayer={targetIdx => seerPeekPlayer(playerIdx, targetIdx)}
-              onPeekCenter={(c1, c2) => seerPeekCenter(playerIdx, c1, c2)}
+              onPeekPlayer={targetIdx => seerPeekPlayer(roleIndices, targetIdx)}
+              onPeekCenter={(c1, c2) => seerPeekCenter(roleIndices, c1, c2)}
             />
           )}
 
@@ -415,16 +460,16 @@ export function NightActionScreen({ onClose }: Props) {
           {role === 'Robber' && (
             <div className="flex flex-col gap-3">
               <p className="text-sm text-foreground/70 text-center">
-                Pick a player to rob. You'll swap cards and see your new role.
+                Pick a seat to rob. You'll swap cards and see your new role.
               </p>
               <div className="flex flex-col gap-2">
                 {Array.from({ length: playerCount }, (_, i) => {
-                  if (i === playerIdx) return null;
+                  if (i === primaryIdx) return null;
                   return (
                     <SelectableCard
                       key={i}
-                      label={getDisplayName(playerNames, i)}
-                      onClick={() => robberSwap(playerIdx, i)}
+                      label={seatLabel(i)}
+                      onClick={() => robberSwap(roleIndices, i)}
                     />
                   );
                 })}
@@ -435,10 +480,9 @@ export function NightActionScreen({ onClose }: Props) {
           {/* ── Troublemaker ── */}
           {role === 'Troublemaker' && (
             <TroublemakerAction
-              playerIdx={playerIdx}
+              playerIdx={primaryIdx}
               playerCount={playerCount}
-              playerNames={playerNames}
-              onSwap={(a, b) => troublemakerSwap(playerIdx, a, b)}
+              onSwap={(a, b) => troublemakerSwap(roleIndices, a, b)}
             />
           )}
 
@@ -453,7 +497,7 @@ export function NightActionScreen({ onClose }: Props) {
                   <SelectableCard
                     key={ci}
                     label={`Center ${roman}`}
-                    onClick={() => drunkSwap(playerIdx, ci)}
+                    onClick={() => drunkSwap(roleIndices, ci)}
                   />
                 ))}
               </div>
@@ -467,7 +511,7 @@ export function NightActionScreen({ onClose }: Props) {
                 Check if your card changed during the night.
               </p>
               <Button
-                onClick={() => insomniacPeek(playerIdx)}
+                onClick={() => insomniacPeek(roleIndices)}
                 className="w-full h-12 font-serif tracking-wider bg-primary text-primary-foreground"
               >
                 <Eye className="w-4 h-4 mr-2" /> View My Current Card
@@ -479,16 +523,16 @@ export function NightActionScreen({ onClose }: Props) {
           {role === 'Shapeshifter' && (
             <div className="flex flex-col gap-3">
               <p className="text-sm text-foreground/70 text-center">
-                Look at one player's card and imitate that role (no swap).
+                Look at one other seat's card and imitate that role (no swap).
               </p>
               <div className="flex flex-col gap-2">
                 {Array.from({ length: playerCount }, (_, i) => {
-                  if (i === playerIdx) return null;
+                  if (i === primaryIdx) return null;
                   return (
                     <SelectableCard
                       key={i}
-                      label={getDisplayName(playerNames, i)}
-                      onClick={() => shapeshifterPeek(playerIdx, i)}
+                      label={seatLabel(i)}
+                      onClick={() => shapeshifterPeek(roleIndices, i)}
                     />
                   );
                 })}
@@ -499,30 +543,37 @@ export function NightActionScreen({ onClose }: Props) {
           {/* ── Werewolf ── */}
           {role === 'Werewolf' && (
             <div className="flex flex-col gap-4">
-              {partners.length > 0 ? (
-                <div className="rounded-xl border border-red-700/40 bg-red-950/30 p-4">
-                  <p className="text-xs uppercase tracking-widest text-red-400/70 mb-2">
-                    Your werewolf {partners.length === 1 ? 'partner' : 'pack'}
-                  </p>
-                  {partners.map(pi => (
-                    <div key={pi} className="flex items-center gap-3 py-1">
-                      <Skull className="w-4 h-4 text-red-400" />
-                      <span className="font-serif text-lg text-foreground">
-                        {getDisplayName(playerNames, pi)}
-                      </span>
+              <div className="rounded-xl border border-red-700/40 bg-red-950/30 p-4">
+                {packSeats.length > 1 ? (
+                  <>
+                    <p className="text-xs uppercase tracking-widest text-red-400/70 mb-3">
+                      Your pack ({packSeats.length} werewolves)
+                    </p>
+                    <div className="flex flex-col gap-1">
+                      {packSeats.map(si => (
+                        <div key={si} className="flex items-center gap-3 py-1">
+                          <Skull className="w-4 h-4 text-red-400 shrink-0" />
+                          <span className="font-serif text-lg text-foreground">
+                            {seatLabel(si)}
+                            {si === primaryIdx && (
+                              <span className="ml-2 text-xs text-red-400/60 uppercase tracking-wider">you</span>
+                            )}
+                          </span>
+                        </div>
+                      ))}
                     </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="rounded-xl border border-red-700/40 bg-red-950/30 p-4">
-                  <p className="text-xs uppercase tracking-widest text-red-400/70 mb-1">Lone Wolf</p>
-                  <p className="text-sm text-foreground/70">
-                    You are the only werewolf. You may peek at one center card (optional).
-                  </p>
-                </div>
-              )}
+                  </>
+                ) : (
+                  <>
+                    <p className="text-xs uppercase tracking-widest text-red-400/70 mb-1">Lone Wolf</p>
+                    <p className="text-sm text-foreground/70">
+                      You are the only werewolf. You may peek at one center card (optional).
+                    </p>
+                  </>
+                )}
+              </div>
 
-              {/* Lone wolf: OPTIONAL center peek */}
+              {/* Lone wolf: optional center peek */}
               {isLoneWolf && (
                 <div className="flex flex-col gap-2">
                   <p className="text-xs text-muted-foreground text-center">
@@ -533,19 +584,18 @@ export function NightActionScreen({ onClose }: Props) {
                       <SelectableCard
                         key={ci}
                         label={`Center ${roman}`}
-                        onClick={() => werewolfPeekCenter(playerIdx, ci)}
+                        onClick={() => werewolfPeekCenter(roleIndices, ci)}
                       />
                     ))}
                   </div>
                 </div>
               )}
 
-              {/* Done button — always available for Werewolf, including lone wolf who may skip */}
               <Button
                 onClick={() =>
                   handleDone(
-                    playerIdx,
-                    partners.length > 0
+                    roleIndices,
+                    packSeats.length > 1
                       ? "You've identified your pack. Close your eyes."
                       : "You've finished your turn. Close your eyes.",
                   )
@@ -562,25 +612,28 @@ export function NightActionScreen({ onClose }: Props) {
           {role === 'Mason' && (
             <div className="flex flex-col gap-4">
               <div className="rounded-xl border border-blue-700/40 bg-blue-950/30 p-4">
-                {masonPartners(playerIdx).length > 0 ? (
+                {masonSeats.length > 1 ? (
                   <>
-                    <p className="text-xs uppercase tracking-widest text-blue-400/70 mb-2">
-                      Your fellow Mason
+                    <p className="text-xs uppercase tracking-widest text-blue-400/70 mb-3">
+                      Fellow Masons ({masonSeats.length} total)
                     </p>
-                    {masonPartners(playerIdx).map(pi => (
-                      <div key={pi} className="flex items-center gap-3 py-1">
-                        <Users className="w-4 h-4 text-blue-400" />
-                        <span className="font-serif text-lg text-foreground">
-                          {getDisplayName(playerNames, pi)}
-                        </span>
-                      </div>
-                    ))}
+                    <div className="flex flex-col gap-1">
+                      {masonSeats.map(si => (
+                        <div key={si} className="flex items-center gap-3 py-1">
+                          <Users className="w-4 h-4 text-blue-400 shrink-0" />
+                          <span className="font-serif text-lg text-foreground">
+                            {seatLabel(si)}
+                            {si === primaryIdx && (
+                              <span className="ml-2 text-xs text-blue-400/60 uppercase tracking-wider">you</span>
+                            )}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
                   </>
                 ) : (
                   <>
-                    <p className="text-xs uppercase tracking-widest text-blue-400/70 mb-1">
-                      Lone Mason
-                    </p>
+                    <p className="text-xs uppercase tracking-widest text-blue-400/70 mb-1">Lone Mason</p>
                     <p className="text-sm text-foreground/70">
                       The other Mason card is in the center. You are the only Mason awake.
                     </p>
@@ -588,7 +641,7 @@ export function NightActionScreen({ onClose }: Props) {
                 )}
               </div>
               <Button
-                onClick={() => handleDone(playerIdx, "You've identified your fellow Mason. Close your eyes.")}
+                onClick={() => handleDone(roleIndices, "You've identified your fellow Masons. Close your eyes.")}
                 className="w-full h-12 font-serif tracking-wider"
               >
                 <EyeOff className="w-4 h-4 mr-2" /> Done — Close Eyes
@@ -602,15 +655,13 @@ export function NightActionScreen({ onClose }: Props) {
               <div className="rounded-xl border border-red-700/40 bg-red-950/30 p-4">
                 {werewolfIndices().length > 0 ? (
                   <>
-                    <p className="text-xs uppercase tracking-widest text-red-400/70 mb-2">
-                      The werewolves are
+                    <p className="text-xs uppercase tracking-widest text-red-400/70 mb-3">
+                      The werewolves are at
                     </p>
-                    {werewolfIndices().map(pi => (
-                      <div key={pi} className="flex items-center gap-3 py-1">
-                        <Skull className="w-4 h-4 text-red-400" />
-                        <span className="font-serif text-lg text-foreground">
-                          {getDisplayName(playerNames, pi)}
-                        </span>
+                    {werewolfIndices().map(si => (
+                      <div key={si} className="flex items-center gap-3 py-1">
+                        <Skull className="w-4 h-4 text-red-400 shrink-0" />
+                        <span className="font-serif text-lg text-foreground">{seatLabel(si)}</span>
                       </div>
                     ))}
                     <p className="text-xs text-red-400/50 mt-2">
@@ -619,9 +670,7 @@ export function NightActionScreen({ onClose }: Props) {
                   </>
                 ) : (
                   <>
-                    <p className="text-xs uppercase tracking-widest text-red-400/70 mb-1">
-                      No Werewolves
-                    </p>
+                    <p className="text-xs uppercase tracking-widest text-red-400/70 mb-1">No Werewolves</p>
                     <p className="text-sm text-foreground/70">
                       All werewolf cards are in the center. As Minion, you win only if no one is eliminated.
                     </p>
@@ -629,7 +678,7 @@ export function NightActionScreen({ onClose }: Props) {
                 )}
               </div>
               <Button
-                onClick={() => handleDone(playerIdx, "You've seen the werewolves. Close your eyes.")}
+                onClick={() => handleDone(roleIndices, "You've seen the werewolves. Close your eyes.")}
                 className="w-full h-12 font-serif tracking-wider bg-red-900/60 hover:bg-red-900/80 border border-red-700/50 text-red-200"
               >
                 <EyeOff className="w-4 h-4 mr-2" /> Done — Close Eyes
@@ -641,6 +690,8 @@ export function NightActionScreen({ onClose }: Props) {
     );
   };
 
+  // ── peeking screen ─────────────────────────────────────────────────────────
+
   const renderPeeking = (p: Extract<NightPhase, { kind: 'peeking' }>) => (
     <motion.div
       key="peeking"
@@ -651,9 +702,7 @@ export function NightActionScreen({ onClose }: Props) {
     >
       <div className="text-center">
         <Eye className="w-8 h-8 text-primary mx-auto mb-2" />
-        <p className="text-xs uppercase tracking-widest text-muted-foreground">
-          {getDisplayName(playerNames, p.playerIdx)} sees
-        </p>
+        <p className="text-xs uppercase tracking-widest text-muted-foreground">You see</p>
       </div>
 
       <div className={cn('flex gap-4 justify-center', p.cards.length === 1 ? 'scale-110' : '')}>
@@ -663,7 +712,7 @@ export function NightActionScreen({ onClose }: Props) {
       </div>
 
       <Button
-        onClick={() => afterPeeking(p.playerIdx)}
+        onClick={() => afterPeeking(p.roleIndices)}
         variant="outline"
         className="w-full h-12 font-serif tracking-wider border-border/50 hover:bg-card text-foreground"
       >
@@ -671,6 +720,8 @@ export function NightActionScreen({ onClose }: Props) {
       </Button>
     </motion.div>
   );
+
+  // ── complete screen ────────────────────────────────────────────────────────
 
   const renderComplete = (p: Extract<NightPhase, { kind: 'complete' }>) => (
     <motion.div
@@ -694,6 +745,8 @@ export function NightActionScreen({ onClose }: Props) {
     </motion.div>
   );
 
+  // ── root render ────────────────────────────────────────────────────────────
+
   return (
     <motion.div
       initial={{ opacity: 0 }}
@@ -709,7 +762,7 @@ export function NightActionScreen({ onClose }: Props) {
       <div className="relative z-10 flex-1 flex flex-col justify-center">
         <AnimatePresence mode="wait">
           {phase.kind === 'select'   && renderSelect()}
-          {phase.kind === 'action'   && renderAction(phase.playerIdx)}
+          {phase.kind === 'action'   && renderAction(phase.role, phase.roleIndices)}
           {phase.kind === 'peeking'  && renderPeeking(phase)}
           {phase.kind === 'complete' && renderComplete(phase)}
         </AnimatePresence>
@@ -721,13 +774,12 @@ export function NightActionScreen({ onClose }: Props) {
 // ─── Seer sub-component ───────────────────────────────────────────────────────
 
 function SeerAction({
-  playerIdx, playerCount, playerNames, onPeekPlayer, onPeekCenter,
+  playerIdx, playerCount, onPeekPlayer, onPeekCenter,
 }: {
-  playerIdx: number;
-  playerCount: number;
-  playerNames: string[];
-  onPeekPlayer: (targetIdx: number) => void;
-  onPeekCenter: (c1: number, c2: number) => void;
+  playerIdx:     number;
+  playerCount:   number;
+  onPeekPlayer:  (targetIdx: number) => void;
+  onPeekCenter:  (c1: number, c2: number) => void;
 }) {
   const [mode, setMode] = useState<'choose' | 'player' | 'center'>('choose');
   const [firstCenter, setFirstCenter] = useState<number | null>(null);
@@ -736,18 +788,10 @@ function SeerAction({
     return (
       <div className="flex flex-col gap-3">
         <p className="text-sm text-foreground/70 text-center">Choose what to look at:</p>
-        <Button
-          onClick={() => setMode('player')}
-          variant="outline"
-          className="w-full h-12 font-serif tracking-wider"
-        >
+        <Button onClick={() => setMode('player')} variant="outline" className="w-full h-12 font-serif tracking-wider">
           <User className="w-4 h-4 mr-2" /> 1 Player's Card
         </Button>
-        <Button
-          onClick={() => setMode('center')}
-          variant="outline"
-          className="w-full h-12 font-serif tracking-wider"
-        >
+        <Button onClick={() => setMode('center')} variant="outline" className="w-full h-12 font-serif tracking-wider">
           <Moon className="w-4 h-4 mr-2" /> 2 Center Cards
         </Button>
       </div>
@@ -757,14 +801,14 @@ function SeerAction({
   if (mode === 'player') {
     return (
       <div className="flex flex-col gap-3">
-        <p className="text-sm text-foreground/70 text-center">Pick a player to look at:</p>
+        <p className="text-sm text-foreground/70 text-center">Pick a seat to look at:</p>
         <div className="flex flex-col gap-2">
           {Array.from({ length: playerCount }, (_, i) => {
             if (i === playerIdx) return null;
             return (
               <SelectableCard
                 key={i}
-                label={getDisplayName(playerNames, i)}
+                label={seatLabel(i)}
                 onClick={() => onPeekPlayer(i)}
               />
             );
@@ -819,12 +863,11 @@ function SeerAction({
 // ─── Troublemaker sub-component ───────────────────────────────────────────────
 
 function TroublemakerAction({
-  playerIdx, playerCount, playerNames, onSwap,
+  playerIdx, playerCount, onSwap,
 }: {
-  playerIdx: number;
+  playerIdx:   number;
   playerCount: number;
-  playerNames: string[];
-  onSwap: (a: number, b: number) => void;
+  onSwap:      (a: number, b: number) => void;
 }) {
   const [first, setFirst] = useState<number | null>(null);
 
@@ -832,8 +875,8 @@ function TroublemakerAction({
     <div className="flex flex-col gap-3">
       <p className="text-sm text-foreground/70 text-center">
         {first === null
-          ? 'Pick the first player to swap (not yourself):'
-          : 'Now pick the second player to swap with:'}
+          ? 'Pick the first seat to swap (not your own):'
+          : 'Now pick the second seat to swap with:'}
       </p>
       <div className="flex flex-col gap-2">
         {Array.from({ length: playerCount }, (_, i) => {
@@ -841,7 +884,7 @@ function TroublemakerAction({
           return (
             <SelectableCard
               key={i}
-              label={getDisplayName(playerNames, i)}
+              label={seatLabel(i)}
               selected={first === i}
               disabled={first !== null && first === i}
               onClick={() => {
@@ -860,7 +903,7 @@ function TroublemakerAction({
           onClick={() => setFirst(null)}
           className="text-xs text-muted-foreground hover:text-foreground text-center mt-1"
         >
-          ← Pick different first player
+          ← Pick different first seat
         </button>
       )}
     </div>
