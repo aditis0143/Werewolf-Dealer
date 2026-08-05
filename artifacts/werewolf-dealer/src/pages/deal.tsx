@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useLocation } from 'wouter';
-import { useGame } from '@/store/game-store';
+import { useGame, getDisplayName } from '@/store/game-store';
 import { RoleDef } from '@/lib/game-data';
 import { Button } from '@/components/ui/button';
 import { RulebookDrawer } from '@/components/RulebookDrawer';
@@ -284,7 +284,7 @@ function RevealBoard({ playerCount, dealtCards, onPlayAgain, onSetup }: RevealBo
             <MiniCard
               key={i}
               card={card}
-              label={`Player ${i + 1}`}
+              label={getDisplayName(playerNames, i)}
               index={i}
             />
           ))}
@@ -336,7 +336,7 @@ function RevealBoard({ playerCount, dealtCards, onPlayAgain, onSetup }: RevealBo
 // ─── Main page ────────────────────────────────────────────────────────────────
 export default function DealPage() {
   const [, setLocation] = useLocation();
-  const { playerCount, dealtCards, deal, resetGame } = useGame();
+  const { playerCount, playerNames, dealtCards, deal, resetGame } = useGame();
 
   const [currentPlayerIndex, setCurrentPlayerIndex] = useState(0);
   const [step, setStep] = useState<DealStep>('waiting');
@@ -377,7 +377,7 @@ export default function DealPage() {
   return (
     <div className={cn(
       'min-h-[100dvh] w-full bg-background flex flex-col relative',
-      step === 'reveal-board' ? 'overflow-y-auto' : 'overflow-hidden',
+      step === 'reveal-board' || step === 'revealed' ? 'overflow-y-auto' : 'overflow-hidden',
     )}>
 
       {/* Ambient glow */}
@@ -450,8 +450,8 @@ export default function DealPage() {
                   <h2 className="text-xs font-sans uppercase tracking-[0.3em] text-muted-foreground mb-2">
                     Hand device to
                   </h2>
-                  <h1 className="font-serif text-5xl sm:text-6xl text-foreground drop-shadow-lg">
-                    Player {currentPlayerIndex + 1}
+                  <h1 className="font-serif text-5xl sm:text-6xl text-foreground drop-shadow-lg break-words text-center max-w-xs">
+                    {getDisplayName(playerNames, currentPlayerIndex)}
                   </h1>
                   <p className="mt-2 text-xs text-muted-foreground">
                     Make sure no one else is watching
@@ -490,7 +490,7 @@ export default function DealPage() {
                 >
                   {/* Role card */}
                   <div className={cn(
-                    'w-full max-w-[260px] aspect-[2.5/3.5] rounded-2xl p-5 flex flex-col relative overflow-hidden',
+                    'w-full max-w-[300px] min-h-[320px] rounded-2xl p-5 flex flex-col relative overflow-hidden',
                     'shadow-[0_0_60px_rgba(0,0,0,0.9)] border-2 mb-5 bg-gradient-to-b',
                     colors.card,
                   )}>
@@ -508,13 +508,13 @@ export default function DealPage() {
                     </div>
 
                     {/* Icon */}
-                    <div className={cn('flex items-center justify-center flex-1 relative z-10', colors.icon)}>
+                    <div className={cn('flex items-center justify-center py-7 relative z-10', colors.icon)}>
                       <div className="opacity-80">{getRoleIcon(currentCard.baseRole, 'lg')}</div>
                     </div>
 
                     {/* Name + night order */}
                     <div className="text-center relative z-10 mb-3">
-                      <h1 className="font-serif text-3xl sm:text-4xl text-foreground drop-shadow-lg leading-none mb-1">
+                      <h1 className="font-serif text-3xl sm:text-4xl text-foreground drop-shadow-lg leading-tight mb-1 break-words">
                         {currentCard.baseRole}
                       </h1>
                       <span className={cn(
@@ -526,7 +526,7 @@ export default function DealPage() {
                     </div>
 
                     {/* Description */}
-                    <div className="bg-black/40 backdrop-blur-xl rounded-xl p-3 border border-white/10 relative z-10">
+                    <div className="bg-black/40 backdrop-blur-xl rounded-xl p-3 border border-white/10 relative z-10 overflow-y-auto max-h-40">
                       <p className="text-xs sm:text-sm text-foreground/90 leading-relaxed text-center">
                         {currentCard.description}
                       </p>

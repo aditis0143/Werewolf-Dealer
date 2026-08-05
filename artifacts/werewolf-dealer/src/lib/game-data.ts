@@ -217,7 +217,7 @@ export const SCENARIOS = [
     name: 'Hours of Despair',
     difficulty: 'medium',
     minPlayers: 4,
-    maxPlayers: 10,
+    maxPlayers: 13,
     getCards: (players: number) => {
       const base = ['werewolf-1', 'werewolf-2', 'tanner', 'seer', 'robber', 'drunk', 'insomniac'];
       if (players >= 5) base.push('troublemaker');
@@ -226,6 +226,8 @@ export const SCENARIOS = [
       if (players >= 8) base.push('hunter');
       if (players >= 9) base.push('minion');
       if (players >= 10) base.push('villager-2');
+      if (players >= 12) base.push('shapeshifter');
+      if (players >= 13) base.push('villager-3');
       return base;
     }
   },
@@ -234,7 +236,7 @@ export const SCENARIOS = [
     name: 'Twilight Alliance',
     difficulty: 'hard',
     minPlayers: 5,
-    maxPlayers: 10,
+    maxPlayers: 13,
     getCards: (players: number) => {
       const base = ['werewolf-1', 'werewolf-2', 'mason-1', 'mason-2', 'minion', 'robber', 'troublemaker', 'insomniac'];
       if (players >= 6) base.push('drunk');
@@ -242,6 +244,9 @@ export const SCENARIOS = [
       if (players >= 8) base.push('villager-1');
       if (players >= 9) base.push('villager-2');
       if (players >= 10) base.push('tanner');
+      if (players >= 11) base.push('hunter');
+      if (players >= 12) base.push('shapeshifter');
+      if (players >= 13) base.push('villager-3');
       return base;
     }
   },
@@ -250,11 +255,14 @@ export const SCENARIOS = [
     name: 'Revenant',
     difficulty: 'hard',
     minPlayers: 8,
-    maxPlayers: 10,
+    maxPlayers: 13,
     getCards: (players: number) => {
       const base = ['werewolf-1', 'werewolf-2', 'shapeshifter', 'minion', 'hunter', 'seer', 'robber', 'troublemaker', 'villager-1', 'mason-1', 'mason-2'];
       if (players >= 9) base.push('insomniac');
       if (players >= 10) base.push('drunk');
+      if (players >= 11) base.push('villager-2');
+      if (players >= 12) base.push('villager-3');
+      if (players >= 13) base.push('tanner');
       return base;
     }
   },
@@ -263,7 +271,7 @@ export const SCENARIOS = [
     name: 'Anarchy',
     difficulty: 'hard',
     minPlayers: 3,
-    maxPlayers: 10,
+    maxPlayers: 13,
     getCards: (players: number) => {
       // Base required for anarchy
       const base = ['werewolf-1', 'werewolf-2', 'villager-1'];

@@ -12,7 +12,9 @@ export default function SetupPage() {
   const [, setLocation] = useLocation();
   const { 
     playerCount, 
-    setPlayerCount, 
+    setPlayerCount,
+    playerNames,
+    setPlayerName,
     selectedCardIds, 
     toggleCard, 
     setCards,
@@ -94,11 +96,39 @@ export default function SetupPage() {
               variant="outline" 
               size="icon"
               className="h-12 w-12 rounded-full border-primary/30 text-primary hover:bg-primary hover:text-primary-foreground transition-all"
-              onClick={() => setPlayerCount(Math.min(10, playerCount + 1))}
-              disabled={playerCount >= 10}
+              onClick={() => setPlayerCount(Math.min(13, playerCount + 1))}
+              disabled={playerCount >= 13}
             >
               <Plus className="w-5 h-5" />
             </Button>
+          </div>
+        </div>
+
+        {/* Player Names */}
+        <div className="mb-8 p-6 rounded-xl border border-border/50 bg-card/30 backdrop-blur-md shadow-lg">
+          <div className="mb-4">
+            <h2 className="font-serif text-xl text-foreground mb-1">Name the Village</h2>
+            <p className="text-sm text-muted-foreground">Optional — leave blank to use Player 1, 2, 3…</p>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+            {Array.from({ length: playerCount }, (_, i) => (
+              <div key={i} className="flex flex-col gap-1">
+                <label className="text-[10px] uppercase tracking-widest text-muted-foreground font-semibold">
+                  Player {i + 1}
+                </label>
+                <input
+                  type="text"
+                  value={playerNames[i] ?? ''}
+                  onChange={e => setPlayerName(i, e.target.value)}
+                  onBlur={e => {
+                    if (!e.target.value.trim()) setPlayerName(i, `Player ${i + 1}`);
+                  }}
+                  placeholder={`Player ${i + 1}`}
+                  maxLength={20}
+                  className="bg-background/50 border border-border/50 rounded-lg px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground/40 focus:outline-none focus:ring-1 focus:ring-primary/50 focus:border-primary/50 transition-colors"
+                />
+              </div>
+            ))}
           </div>
         </div>
 
