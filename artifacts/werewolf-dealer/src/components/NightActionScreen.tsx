@@ -644,7 +644,33 @@ export function NightActionScreen({ onClose }: Props) {
               </Button>
             </div>
           )}
+
+          {/* ── Passive roles (no night action) ── */}
+          {!['Seer','Robber','Troublemaker','Drunk','Insomniac','Shapeshifter',
+              'Werewolf','Mason','Minion'].includes(role) && (
+            <div className="flex flex-col items-center gap-4">
+              <div className="rounded-xl border border-border/30 bg-card/30 p-4 w-full text-center">
+                <p className="text-sm text-foreground/70">
+                  You have no night action. Keep your eyes closed and wait for morning.
+                </p>
+              </div>
+              <Button
+                onClick={() => handleDone(roleIndices, 'No action needed. Pass the device back.')}
+                className="w-full h-12 font-serif tracking-wider"
+              >
+                <EyeOff className="w-4 h-4 mr-2" /> Done — Close Eyes
+              </Button>
+            </div>
+          )}
         </div>
+
+        {/* Always-visible back button so players can never get stuck */}
+        <button
+          onClick={() => setPhase({ kind: 'select' })}
+          className="text-xs text-muted-foreground hover:text-foreground text-center mt-1"
+        >
+          ← Back to Night Actions
+        </button>
       </motion.div>
     );
   };
