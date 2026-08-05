@@ -233,16 +233,17 @@ function playerPolar(i: number, n: number): { angleDeg: number; angleRad: number
 
 // ─── Night Board (face-down, night phase) ─────────────────────────────────────
 interface NightBoardProps {
-  playerCount:       number;
-  playerNames:       string[];
-  allNightDone:      boolean;
-  nightActionsDone:  number;
-  onNightAction:     () => void;
-  onEndNight:        () => void;
+  playerCount:        number;
+  playerNames:        string[];
+  allNightDone:       boolean;
+  nightActionsDone:   number;
+  totalNightActions:  number;
+  onNightAction:      () => void;
+  onEndNight:         () => void;
 }
 
 function NightBoard({
-  playerCount, playerNames, allNightDone, nightActionsDone, onNightAction, onEndNight,
+  playerCount, playerNames, allNightDone, nightActionsDone, totalNightActions, onNightAction, onEndNight,
 }: NightBoardProps) {
   const { containerRef, size } = useTableSize();
   const ready = size.w > 0 && size.h > 0;
@@ -409,9 +410,9 @@ function NightBoard({
             >
               <Moon className="w-4 h-4 mr-2" />
               Perform Night Action
-              {nightActionsDone > 0 && (
+              {totalNightActions > 0 && (
                 <span className="ml-2 text-xs bg-primary-foreground/20 rounded-full px-1.5 py-0.5">
-                  {nightActionsDone}
+                  {nightActionsDone}/{totalNightActions}
                 </span>
               )}
             </Button>
@@ -699,7 +700,11 @@ export default function DealPage() {
   const currentCard  = dealtCards[currentPlayerIndex];
   const colors       = factionColor(currentCard?.faction);
 
-  const nightActionsDone = nightActionsCompleted.size;
+  // Only count players whose starting role has a night action (excludes pre-completed Villagers etc.)
+  const totalNightActions = Array.from({ length: playerCount }, (_, i) => i)
+    .filter(i => dealtCards[i]?.nightOrder !== null).length;
+  const nightActionsDone = Array.from({ length: playerCount }, (_, i) => i)
+    .filter(i => dealtCards[i]?.nightOrder !== null && nightActionsCompleted.has(i)).length;
   const allNightDone = Array.from({ length: playerCount }, (_, i) => i)
     .every(i => nightActionsCompleted.has(i));
 
@@ -797,6 +802,7 @@ export default function DealPage() {
             playerNames={playerNames}
             allNightDone={allNightDone}
             nightActionsDone={nightActionsDone}
+            totalNightActions={totalNightActions}
             onNightAction={handleOpenNightAction}
             onEndNight={handleEndNight}
           />

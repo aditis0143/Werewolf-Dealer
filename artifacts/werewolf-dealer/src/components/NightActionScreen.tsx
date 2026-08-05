@@ -284,6 +284,18 @@ export function NightActionScreen({ onClose }: Props) {
       .filter(g => g.order !== null)
       .sort((a, b) => (a.order ?? 99) - (b.order ?? 99));
 
+    // ── Night-order enforcement ──────────────────────────────────────────────
+    // Find the lowest nightOrder among role groups that still have incomplete players.
+    // Only that exact nightOrder is allowed to act; earlier orders must finish first.
+    const incompleteGroups = nightGroups.filter(g => {
+      const completedCount = g.indices.filter(i => nightActionsCompleted.has(i)).length;
+      return completedCount < g.indices.length;
+    });
+    const currentOrder: number | null =
+      incompleteGroups.length > 0
+        ? Math.min(...incompleteGroups.map(g => g.order!))
+        : null;
+
     return (
       <motion.div
         key="select"
@@ -303,43 +315,52 @@ export function NightActionScreen({ onClose }: Props) {
           )}
         </div>
 
-        {/* Role buttons — always selectable until all instances of that role are done */}
+        {/* Role buttons — only the current night-order role is interactive */}
         <div className="w-full flex flex-col gap-2">
           {nightGroups.map(({ role, card, indices }) => {
             const completedCount = indices.filter(i => nightActionsCompleted.has(i)).length;
-            const done = completedCount === indices.length;
-            const fc   = roleFactionIcon(role);
+            const done       = completedCount === indices.length;
+            // Not yet this role's turn: a lower nightOrder is still incomplete
+            const notYetTurn = !done && currentOrder !== null && (card.nightOrder ?? 0) > currentOrder;
+            const isDisabled = done || notYetTurn;
+            const fc         = roleFactionIcon(role);
 
             return (
               <button
                 key={role}
                 onClick={() =>
-                  done ? undefined : setPhase({ kind: 'action', role, roleIndices: indices })
+                  isDisabled ? undefined : setPhase({ kind: 'action', role, roleIndices: indices })
                 }
-                disabled={done}
+                disabled={isDisabled}
                 className={cn(
                   'w-full rounded-xl border-2 px-4 py-3.5 flex items-center justify-between transition-all',
                   done
                     ? 'border-border/20 bg-card/20 text-muted-foreground/40 cursor-default'
-                    : cn('hover:opacity-90 active:scale-[0.98] cursor-pointer', fc.border, fc.bg),
+                    : notYetTurn
+                      ? 'border-border/20 bg-card/15 text-muted-foreground/30 cursor-not-allowed'
+                      : cn('hover:opacity-90 active:scale-[0.98] cursor-pointer', fc.border, fc.bg),
                 )}
               >
-                {/* Left: status dot + icon + role name */}
+                {/* Left: status icon + role icon + role name */}
                 <div className="flex items-center gap-3">
                   {done ? (
                     <CheckCircle className="w-4 h-4 text-green-500/60 shrink-0" />
+                  ) : notYetTurn ? (
+                    <Moon className="w-4 h-4 text-muted-foreground/30 shrink-0" />
                   ) : (
                     <div className="w-2 h-2 rounded-full bg-primary animate-pulse shrink-0" />
                   )}
-                  <span className={cn('shrink-0', done ? 'opacity-40' : fc.icon)}>
+                  <span className={cn('shrink-0', done || notYetTurn ? 'opacity-30' : fc.icon)}>
                     {getRoleIcon(card.baseRole, 'sm')}
                   </span>
-                  <span className="font-serif text-xl">{role}</span>
+                  <span className={cn('font-serif text-xl', notYetTurn && 'opacity-40')}>{role}</span>
                 </div>
 
                 {/* Right: progress or call-to-action */}
                 {done ? (
                   <span className="text-xs text-muted-foreground/40 uppercase tracking-widest">Done</span>
+                ) : notYetTurn ? (
+                  <span className="text-xs text-muted-foreground/30 uppercase tracking-widest">Waiting…</span>
                 ) : indices.length > 1 ? (
                   /* Multi-player role: show how many have acted */
                   <div className="flex items-center gap-1.5">
