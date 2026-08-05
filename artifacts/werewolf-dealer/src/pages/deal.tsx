@@ -7,13 +7,20 @@ import { RulebookDrawer } from '@/components/RulebookDrawer';
 import { NightActionScreen } from '@/components/NightActionScreen';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-  Eye, EyeOff, Moon, Redo, Users, User, Target, Shuffle,
+  Eye, EyeOff, Moon, Sun, Redo, Users, User, Target, Shuffle,
   RefreshCw, UserX, Layers, Glasses, Wine, Shield, Skull,
-  LayoutGrid, Settings,
+  LayoutGrid, Settings, CheckCircle, Swords,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
-type DealStep = 'waiting' | 'revealed' | 'done' | 'reveal-board';
+// Flow:
+//   waiting → revealed → (pass) → waiting (repeat per player)
+//   last player: waiting → revealed → done
+//   done → night  (initNightPhase called here)
+//   night → day   (all night actions done, End Night button)
+//   day → reveal-board  (End Game hold button)
+//   reveal-board  (final card positions shown)
+type DealStep = 'waiting' | 'revealed' | 'done' | 'night' | 'day' | 'reveal-board';
 
 // ─── Role icon map ────────────────────────────────────────────────────────────
 function getRoleIcon(baseRole: string, size = 'md') {
@@ -79,17 +86,16 @@ function factionColor(faction: RoleDef['faction']) {
 
 // ─── Hold-to-confirm button ───────────────────────────────────────────────────
 const HOLD_MS = 1500;
-const RING_R  = 26;
-const RING_C  = 2 * Math.PI * RING_R; // ≈ 163.4
 
 interface HoldButtonProps {
   onComplete: () => void;
   label: string;
   icon?: React.ReactNode;
   className?: string;
+  disabled?: boolean;
 }
 
-function HoldButton({ onComplete, label, icon, className }: HoldButtonProps) {
+function HoldButton({ onComplete, label, icon, className, disabled }: HoldButtonProps) {
   const [progress, setProgress] = useState(0);
   const [holding,  setHolding]  = useState(false);
   const rafRef   = useRef<number | null>(null);
@@ -114,14 +120,13 @@ function HoldButton({ onComplete, label, icon, className }: HoldButtonProps) {
   }, [onComplete]);
 
   const startHold = useCallback(() => {
+    if (disabled) return;
     startRef.current = Date.now();
     setHolding(true);
     rafRef.current = requestAnimationFrame(tick);
-  }, [tick]);
+  }, [tick, disabled]);
 
   useEffect(() => () => { if (rafRef.current) cancelAnimationFrame(rafRef.current); }, []);
-
-  const offset = RING_C * (1 - progress / 100);
 
   return (
     <button
@@ -129,41 +134,18 @@ function HoldButton({ onComplete, label, icon, className }: HoldButtonProps) {
       onPointerUp={cancel}
       onPointerLeave={cancel}
       onPointerCancel={cancel}
+      disabled={disabled}
       className={cn(
         'relative flex items-center justify-center gap-3 rounded-xl border border-border/60',
         'bg-card/50 backdrop-blur-md text-foreground/80 font-serif tracking-widest',
         'select-none touch-none active:scale-[0.98] transition-transform',
         'w-full h-16 text-sm sm:text-base px-4',
         holding && 'border-primary/60 text-primary',
+        disabled && 'opacity-40 cursor-not-allowed active:scale-100',
         className,
       )}
       style={{ userSelect: 'none', WebkitUserSelect: 'none' }}
     >
-      {/* SVG progress ring */}
-      <svg
-        className="absolute inset-0 w-full h-full rounded-xl pointer-events-none"
-        style={{ overflow: 'visible' }}
-      >
-        {/* subtle track */}
-        <rect
-          x="1" y="1"
-          width="calc(100% - 2px)" height="calc(100% - 2px)"
-          rx="11" ry="11"
-          fill="none"
-          stroke="rgba(212,175,55,0.08)"
-          strokeWidth="2"
-        />
-        {/* animated fill overlay */}
-        {holding && (
-          <rect
-            x="1" y="1"
-            width="calc(100% - 2px)" height="calc(100% - 2px)"
-            rx="11" ry="11"
-            fill="rgba(212,175,55,0.07)"
-          />
-        )}
-      </svg>
-
       {/* Bottom progress bar */}
       <div className="absolute bottom-0 left-0 right-0 h-[2px] rounded-b-xl overflow-hidden">
         <div
@@ -180,65 +162,8 @@ function HoldButton({ onComplete, label, icon, className }: HoldButtonProps) {
   );
 }
 
-// ─── Mini reveal card (used on the board) ────────────────────────────────────
-interface MiniCardProps {
-  card: RoleDef;
-  label: string;
-  isCenter?: boolean;
-  index?: number;
-}
-
-function MiniCard({ card, label, isCenter }: MiniCardProps) {
-  const c = factionColor(card.faction);
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: 12 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.4 }}
-      className={cn(
-        'rounded-xl border p-3 flex flex-col gap-2 relative overflow-hidden',
-        c.mini,
-      )}
-    >
-      {/* label */}
-      <p className={cn(
-        'text-[10px] uppercase tracking-widest font-semibold',
-        isCenter ? 'text-muted-foreground' : 'text-foreground/60',
-      )}>
-        {label}
-      </p>
-
-      {/* icon + name row */}
-      <div className="flex items-center gap-2">
-        <span className={cn('shrink-0', c.icon)}>{getRoleIcon(card.baseRole, 'sm')}</span>
-        <span className="font-serif text-base text-foreground leading-tight">
-          {card.baseRole}
-        </span>
-      </div>
-
-      {/* faction badge */}
-      <span className={cn(
-        'self-start text-[10px] font-bold px-2 py-0.5 rounded-sm uppercase tracking-wider',
-        c.miniBadge,
-      )}>
-        {card.faction}
-      </span>
-    </motion.div>
-  );
-}
-
-// ─── Circular table board (night phase) ──────────────────────────────────────
-interface RevealBoardProps {
-  playerCount: number;
-  playerNames: string[];
-  dealtCards:  RoleDef[];
-  onPlayAgain: () => void;
-  onSetup:     () => void;
-  onNightAction: () => void;
-  nightActionsDone: number;
-}
-
-function RevealBoard({ playerCount, playerNames, onPlayAgain, onSetup, onNightAction, nightActionsDone }: RevealBoardProps) {
+// ─── Shared circular-table layout helpers ─────────────────────────────────────
+function useTableSize() {
   const containerRef = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ w: 320, h: 500 });
 
@@ -252,29 +177,39 @@ function RevealBoard({ playerCount, playerNames, onPlayAgain, onSetup, onNightAc
     return () => ro.disconnect();
   }, []);
 
+  return { containerRef, size };
+}
+
+// ─── Night Board (face-down, night phase) ─────────────────────────────────────
+interface NightBoardProps {
+  playerCount:       number;
+  playerNames:       string[];
+  allNightDone:      boolean;
+  nightActionsDone:  number;
+  onNightAction:     () => void;
+  onEndNight:        () => void;
+}
+
+function NightBoard({
+  playerCount, playerNames, allNightDone, nightActionsDone, onNightAction, onEndNight,
+}: NightBoardProps) {
+  const { containerRef, size } = useTableSize();
+
   const cx = size.w / 2;
   const cy = size.h / 2;
   const minDim = Math.min(size.w, size.h);
-
-  // Card dimensions — shrink slightly for large player counts
   const scaleFactor = Math.min(1, 7 / Math.max(playerCount, 7));
   const cardW = Math.max(42, Math.min(78, minDim * 0.17 * scaleFactor));
   const cardH = cardW * 1.55;
-
-  // Radius: place cards near the edge, leaving room for the card body
-  const radius  = minDim * 0.43 - cardH * 0.5;
-  // Inner felt circle radius
-  const tableR  = Math.max(40, radius - cardH * 0.65);
-
-  // Center card dimensions (slightly smaller than player cards)
+  const radius = minDim * 0.43 - cardH * 0.5;
+  const tableR = Math.max(40, radius - cardH * 0.65);
   const cCardW = cardW * 0.85;
   const cCardH = cardH * 0.85;
-  // Total width of the three center cards + gaps
   const centerRowW = cCardW * 3 + 8 * 2;
 
   return (
     <motion.div
-      key="table-board"
+      key="night-board"
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       transition={{ duration: 0.4 }}
@@ -289,8 +224,7 @@ function RevealBoard({ playerCount, playerNames, onPlayAgain, onSetup, onNightAc
               className="absolute rounded-full bg-emerald-950/20 border border-primary/10"
               style={{ width: tableR * 2, height: tableR * 2, left: cx - tableR, top: cy - tableR }}
             />
-
-            {/* Outer table ring */}
+            {/* Outer ring */}
             <div
               className="absolute rounded-full border border-primary/8"
               style={{
@@ -301,16 +235,10 @@ function RevealBoard({ playerCount, playerNames, onPlayAgain, onSetup, onNightAc
               }}
             />
 
-            {/* Center cards */}
+            {/* Center cards (face-down) */}
             <div
               className="absolute flex gap-2"
-              style={{
-                left:      cx,
-                top:       cy,
-                width:     centerRowW,
-                height:    cCardH,
-                transform: 'translate(-50%, -50%)',
-              }}
+              style={{ left: cx, top: cy, width: centerRowW, height: cCardH, transform: 'translate(-50%, -50%)' }}
             >
               {['I', 'II', 'III'].map((roman, i) => (
                 <motion.div
@@ -323,45 +251,33 @@ function RevealBoard({ playerCount, playerNames, onPlayAgain, onSetup, onNightAc
                 >
                   <div className="flex-1 flex items-center justify-center w-full px-1 pt-1">
                     <div className="w-full h-full rounded-md border border-primary/10 bg-primary/4 flex items-center justify-center">
-                      <Moon
-                        className="text-primary/25"
-                        style={{ width: cCardW * 0.32, height: cCardW * 0.32 }}
-                      />
+                      <Moon className="text-primary/25" style={{ width: cCardW * 0.32, height: cCardW * 0.32 }} />
                     </div>
                   </div>
-                  <span
-                    className="text-primary/40 font-bold uppercase tracking-widest leading-none py-1"
-                    style={{ fontSize: Math.max(7, cCardW * 0.13) }}
-                  >
+                  <span className="text-primary/40 font-bold uppercase tracking-widest leading-none py-1" style={{ fontSize: Math.max(7, cCardW * 0.13) }}>
                     {roman}
                   </span>
                 </motion.div>
               ))}
             </div>
 
-            {/* "CENTER" label below the three cards */}
+            {/* "CENTER" label */}
             <div
               className="absolute text-muted-foreground/30 font-semibold uppercase tracking-widest select-none"
-              style={{
-                fontSize: 9,
-                left:     cx,
-                top:      cy + cCardH * 0.5 + 5,
-                transform: 'translateX(-50%)',
-              }}
+              style={{ fontSize: 9, left: cx, top: cy + cCardH * 0.5 + 5, transform: 'translateX(-50%)' }}
             >
               Center
             </div>
 
-            {/* Player cards around the circle */}
+            {/* Player cards (face-down) */}
             {Array.from({ length: playerCount }, (_, i) => {
               const posAngleDeg = (360 / playerCount) * i - 90;
               const posAngleRad = (posAngleDeg * Math.PI) / 180;
-              const x           = cx + radius * Math.cos(posAngleRad);
-              const y           = cy + radius * Math.sin(posAngleRad);
-              // Rotate card so the label faces outward from centre
-              const rotateDeg   = (360 / playerCount) * i;
-              const name        = getDisplayName(playerNames, i);
-              const fontSize    = Math.max(7, Math.min(11, cardW * 0.17));
+              const x = cx + radius * Math.cos(posAngleRad);
+              const y = cy + radius * Math.sin(posAngleRad);
+              const rotateDeg = (360 / playerCount) * i;
+              const name = getDisplayName(playerNames, i);
+              const fontSize = Math.max(7, Math.min(11, cardW * 0.17));
 
               return (
                 <motion.div
@@ -370,29 +286,17 @@ function RevealBoard({ playerCount, playerNames, onPlayAgain, onSetup, onNightAc
                   animate={{ opacity: 1, scale: 1 }}
                   transition={{ delay: i * 0.05, duration: 0.35, type: 'spring', damping: 13 }}
                   style={{
-                    position:  'absolute',
-                    left:      x,
-                    top:       y,
-                    width:     cardW,
-                    height:    cardH,
+                    position: 'absolute', left: x, top: y, width: cardW, height: cardH,
                     transform: `translate(-50%, -50%) rotate(${rotateDeg}deg)`,
                   }}
                   className="rounded-lg border-2 border-border/55 bg-gradient-to-b from-card to-background/90 flex flex-col items-center justify-between shadow-[0_4px_18px_rgba(0,0,0,0.6)] overflow-hidden"
                 >
-                  {/* Card back pattern */}
                   <div className="flex-1 flex items-center justify-center w-full px-1 pt-1">
                     <div className="w-full h-full rounded-md border border-primary/10 bg-primary/3 flex items-center justify-center">
-                      <Shield
-                        className="text-primary/18"
-                        style={{ width: cardW * 0.33, height: cardW * 0.33 }}
-                      />
+                      <Shield className="text-primary/18" style={{ width: cardW * 0.33, height: cardW * 0.33 }} />
                     </div>
                   </div>
-                  {/* Player name */}
-                  <div
-                    className="w-full text-center font-serif text-foreground/75 leading-none px-0.5 pb-1.5 truncate"
-                    style={{ fontSize }}
-                  >
+                  <div className="w-full text-center font-serif text-foreground/75 leading-none px-0.5 pb-1.5 truncate" style={{ fontSize }}>
                     {name}
                   </div>
                 </motion.div>
@@ -404,41 +308,258 @@ function RevealBoard({ playerCount, playerNames, onPlayAgain, onSetup, onNightAc
 
       {/* Action bar */}
       <div className="shrink-0 flex flex-col gap-2 px-4 py-3 border-t border-border/30 bg-background/90 backdrop-blur-md">
-        {/* Night Action button — primary CTA */}
-        <Button
-          onClick={onNightAction}
-          className="w-full h-12 font-serif tracking-wider bg-primary text-primary-foreground hover:bg-primary/90 shadow-[0_0_18px_rgba(212,175,55,0.35)] hover:shadow-[0_0_28px_rgba(212,175,55,0.5)] transition-all"
-        >
-          <Moon className="w-4 h-4 mr-2" />
-          Perform Night Action
-          {nightActionsDone > 0 && (
-            <span className="ml-2 text-xs bg-primary-foreground/20 rounded-full px-1.5 py-0.5">
-              {nightActionsDone}
-            </span>
-          )}
-        </Button>
+        {allNightDone ? (
+          /* All night actions complete — show End Night prominently */
+          <div className="flex flex-col gap-2">
+            <div className="flex items-center justify-center gap-2 text-green-400 text-xs font-semibold uppercase tracking-widest py-1">
+              <CheckCircle className="w-3.5 h-3.5" />
+              All night actions complete
+            </div>
+            <HoldButton
+              onComplete={onEndNight}
+              label="End Night — Begin Discussion"
+              icon={<Sun className="w-4 h-4" />}
+              className="border-blue-500/40 text-blue-300"
+            />
+          </div>
+        ) : (
+          <div className="flex flex-col gap-2">
+            {/* Night Action button — primary CTA */}
+            <Button
+              onClick={onNightAction}
+              className="w-full h-12 font-serif tracking-wider bg-primary text-primary-foreground hover:bg-primary/90 shadow-[0_0_18px_rgba(212,175,55,0.35)] hover:shadow-[0_0_28px_rgba(212,175,55,0.5)] transition-all"
+            >
+              <Moon className="w-4 h-4 mr-2" />
+              Perform Night Action
+              {nightActionsDone > 0 && (
+                <span className="ml-2 text-xs bg-primary-foreground/20 rounded-full px-1.5 py-0.5">
+                  {nightActionsDone}
+                </span>
+              )}
+            </Button>
+            {/* End Night — disabled until all done */}
+            <Button
+              disabled
+              variant="outline"
+              className="w-full h-10 font-serif tracking-wider border-border/30 text-muted-foreground/40 cursor-not-allowed"
+            >
+              <Sun className="w-3.5 h-3.5 mr-1.5 opacity-40" />
+              End Night (complete all actions first)
+            </Button>
+          </div>
+        )}
+      </div>
+    </motion.div>
+  );
+}
 
-        {/* Secondary actions */}
-        <div className="flex gap-2">
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={onPlayAgain}
-            className="flex-1 font-serif tracking-wider border-border/50 text-foreground/65 hover:bg-card hover:text-foreground"
-          >
-            <Redo className="w-3.5 h-3.5 mr-1.5" />
-            Play Again
-          </Button>
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={onSetup}
-            className="flex-1 font-serif tracking-wider border-border/50 text-foreground/65 hover:bg-card hover:text-foreground"
-          >
-            <Settings className="w-3.5 h-3.5 mr-1.5" />
-            Change Setup
-          </Button>
+// ─── Day Phase screen ─────────────────────────────────────────────────────────
+interface DayPhaseProps {
+  onEndGame: () => void;
+}
+
+function DayPhase({ onEndGame }: DayPhaseProps) {
+  return (
+    <motion.div
+      key="day-phase"
+      initial={{ opacity: 0, y: 24 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.6, ease: 'easeOut' }}
+      className="flex-1 flex flex-col items-center justify-center px-6 py-8 max-w-sm mx-auto w-full text-center gap-6"
+    >
+      <Sun className="w-14 h-14 text-yellow-400 drop-shadow-[0_0_20px_rgba(250,204,21,0.5)]" />
+
+      <div>
+        <h1 className="font-serif text-3xl sm:text-4xl text-foreground mb-3 leading-tight">
+          Discussion Time
+        </h1>
+        <div className="bg-card/40 backdrop-blur-md border border-border/50 rounded-xl p-5 shadow-lg">
+          <p className="text-sm sm:text-base text-foreground/85 leading-relaxed">
+            Debate, accuse, and defend. When discussion is over, vote simultaneously to eliminate a player.
+          </p>
         </div>
+      </div>
+
+      <div className="w-full flex flex-col gap-3">
+        <p className="text-[10px] uppercase tracking-widest text-muted-foreground">
+          Hold to confirm when voting is done
+        </p>
+        <HoldButton
+          onComplete={onEndGame}
+          label="End Game — Reveal Cards"
+          icon={<Swords className="w-4 h-4" />}
+          className="border-orange-500/40 text-orange-300"
+        />
+      </div>
+    </motion.div>
+  );
+}
+
+// ─── Final Reveal Board (shows actual nightCards positions) ───────────────────
+interface FinalRevealBoardProps {
+  playerCount:  number;
+  playerNames:  string[];
+  nightCards:   RoleDef[];
+  onPlayAgain:  () => void;
+  onSetup:      () => void;
+}
+
+function FinalRevealBoard({ playerCount, playerNames, nightCards, onPlayAgain, onSetup }: FinalRevealBoardProps) {
+  const { containerRef, size } = useTableSize();
+
+  const cx = size.w / 2;
+  const cy = size.h / 2;
+  const minDim = Math.min(size.w, size.h);
+  const scaleFactor = Math.min(1, 7 / Math.max(playerCount, 7));
+  const cardW = Math.max(42, Math.min(78, minDim * 0.17 * scaleFactor));
+  const cardH = cardW * 1.55;
+  const radius = minDim * 0.43 - cardH * 0.5;
+  const tableR = Math.max(40, radius - cardH * 0.65);
+  const cCardW = cardW * 0.85;
+  const cCardH = cardH * 0.85;
+  const centerRowW = cCardW * 3 + 8 * 2;
+
+  const getColor = (card: RoleDef | undefined) => {
+    if (!card) return { bg: 'bg-card/40', border: 'border-border/30', icon: 'text-muted-foreground/40', badge: 'text-muted-foreground' };
+    switch (card.faction) {
+      case 'Werewolf': return { bg: 'bg-red-950/50', border: 'border-red-700/50', icon: 'text-red-400', badge: 'text-red-300' };
+      case 'Village':  return { bg: 'bg-blue-950/40', border: 'border-blue-700/40', icon: 'text-blue-400', badge: 'text-blue-300' };
+      case 'Tanner':   return { bg: 'bg-orange-950/40', border: 'border-orange-700/40', icon: 'text-orange-400', badge: 'text-orange-300' };
+      default:         return { bg: 'bg-purple-950/40', border: 'border-purple-700/40', icon: 'text-purple-400', badge: 'text-purple-300' };
+    }
+  };
+
+  return (
+    <motion.div
+      key="final-reveal"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={{ duration: 0.5 }}
+      className="w-full flex-1 flex flex-col min-h-0 overflow-hidden"
+    >
+      {/* Header */}
+      <div className="shrink-0 px-4 py-3 flex items-center justify-between border-b border-border/20">
+        <span className="font-serif text-sm text-primary/80 tracking-widest uppercase">Final Reveal</span>
+        <RulebookDrawer />
+      </div>
+
+      {/* Table canvas */}
+      <div ref={containerRef} className="flex-1 relative overflow-hidden min-h-0">
+        {size.w > 0 && (
+          <>
+            {/* Felt surface */}
+            <div
+              className="absolute rounded-full bg-emerald-950/20 border border-primary/10"
+              style={{ width: tableR * 2, height: tableR * 2, left: cx - tableR, top: cy - tableR }}
+            />
+
+            {/* Center cards (revealed) */}
+            <div
+              className="absolute flex gap-2"
+              style={{ left: cx, top: cy, width: centerRowW, height: cCardH, transform: 'translate(-50%, -50%)' }}
+            >
+              {['I', 'II', 'III'].map((roman, i) => {
+                const card = nightCards[playerCount + i];
+                const c = getColor(card);
+                return (
+                  <motion.div
+                    key={i}
+                    initial={{ opacity: 0, scale: 0.75, rotateY: -90 }}
+                    animate={{ opacity: 1, scale: 1, rotateY: 0 }}
+                    transition={{ delay: 0.1 + i * 0.1, duration: 0.5, type: 'spring', damping: 14 }}
+                    style={{ width: cCardW, height: cCardH, flexShrink: 0 }}
+                    className={cn('rounded-lg border flex flex-col items-center justify-between shadow-lg overflow-hidden', c.bg, c.border)}
+                  >
+                    <div className={cn('flex-1 flex items-center justify-center w-full', c.icon)}>
+                      {card ? getRoleIcon(card.baseRole, 'sm') : <Moon className="opacity-20" style={{ width: cCardW * 0.32, height: cCardW * 0.32 }} />}
+                    </div>
+                    <div className="w-full text-center px-0.5 pb-1 leading-none">
+                      <div className={cn('font-serif truncate', c.badge)} style={{ fontSize: Math.max(6, cCardW * 0.15) }}>
+                        {card?.baseRole ?? '?'}
+                      </div>
+                      <div className="text-muted-foreground/40 uppercase tracking-widest" style={{ fontSize: Math.max(5, cCardW * 0.11) }}>
+                        {roman}
+                      </div>
+                    </div>
+                  </motion.div>
+                );
+              })}
+            </div>
+
+            {/* "CENTER" label */}
+            <div
+              className="absolute text-muted-foreground/30 font-semibold uppercase tracking-widest select-none"
+              style={{ fontSize: 9, left: cx, top: cy + cCardH * 0.5 + 5, transform: 'translateX(-50%)' }}
+            >
+              Center
+            </div>
+
+            {/* Player cards (revealed) */}
+            {Array.from({ length: playerCount }, (_, i) => {
+              const card = nightCards[i];
+              const c = getColor(card);
+              const posAngleDeg = (360 / playerCount) * i - 90;
+              const posAngleRad = (posAngleDeg * Math.PI) / 180;
+              const x = cx + radius * Math.cos(posAngleRad);
+              const y = cy + radius * Math.sin(posAngleRad);
+              const rotateDeg = (360 / playerCount) * i;
+              const name = getDisplayName(playerNames, i);
+              const fontSize = Math.max(7, Math.min(11, cardW * 0.17));
+              const roleFontSize = Math.max(6, Math.min(9, cardW * 0.14));
+
+              return (
+                <motion.div
+                  key={i}
+                  initial={{ opacity: 0, scale: 0.65, rotateY: -90 }}
+                  animate={{ opacity: 1, scale: 1, rotateY: 0 }}
+                  transition={{ delay: i * 0.07 + 0.2, duration: 0.5, type: 'spring', damping: 13 }}
+                  style={{
+                    position: 'absolute', left: x, top: y, width: cardW, height: cardH,
+                    transform: `translate(-50%, -50%) rotate(${rotateDeg}deg)`,
+                  }}
+                  className={cn(
+                    'rounded-lg border-2 flex flex-col items-center justify-between shadow-[0_4px_18px_rgba(0,0,0,0.6)] overflow-hidden',
+                    c.bg, c.border,
+                  )}
+                >
+                  <div className={cn('flex-1 flex items-center justify-center w-full px-1 pt-1', c.icon)}>
+                    {card ? getRoleIcon(card.baseRole, 'sm') : <Shield className="opacity-20" style={{ width: cardW * 0.33, height: cardW * 0.33 }} />}
+                  </div>
+                  <div className="w-full text-center px-0.5 pb-1 leading-none">
+                    <div className={cn('font-serif truncate', c.badge)} style={{ fontSize: roleFontSize }}>
+                      {card?.baseRole ?? '?'}
+                    </div>
+                    <div className="text-foreground/55 truncate" style={{ fontSize }}>
+                      {name}
+                    </div>
+                  </div>
+                </motion.div>
+              );
+            })}
+          </>
+        )}
+      </div>
+
+      {/* Action bar */}
+      <div className="shrink-0 flex gap-2 px-4 py-3 border-t border-border/30 bg-background/90 backdrop-blur-md">
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={onPlayAgain}
+          className="flex-1 font-serif tracking-wider border-border/50 text-foreground/65 hover:bg-card hover:text-foreground"
+        >
+          <Redo className="w-3.5 h-3.5 mr-1.5" />
+          Play Again
+        </Button>
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={onSetup}
+          className="flex-1 font-serif tracking-wider border-border/50 text-foreground/65 hover:bg-card hover:text-foreground"
+        >
+          <Settings className="w-3.5 h-3.5 mr-1.5" />
+          Change Setup
+        </Button>
       </div>
     </motion.div>
   );
@@ -447,7 +568,10 @@ function RevealBoard({ playerCount, playerNames, onPlayAgain, onSetup, onNightAc
 // ─── Main page ────────────────────────────────────────────────────────────────
 export default function DealPage() {
   const [, setLocation] = useLocation();
-  const { playerCount, playerNames, dealtCards, deal, resetGame, initNightPhase, nightActionsCompleted } = useGame();
+  const {
+    playerCount, playerNames, dealtCards, nightCards, deal, resetGame,
+    initNightPhase, nightActionsCompleted,
+  } = useGame();
 
   const [currentPlayerIndex, setCurrentPlayerIndex] = useState(0);
   const [step, setStep] = useState<DealStep>('waiting');
@@ -464,6 +588,12 @@ export default function DealPage() {
   const currentCard  = dealtCards[currentPlayerIndex];
   const colors       = factionColor(currentCard?.faction);
 
+  // How many players have finished their night action
+  const nightActionsDone = nightActionsCompleted.size;
+  // All done when every player slot is in the completed set
+  const allNightDone = Array.from({ length: playerCount }, (_, i) => i)
+    .every(i => nightActionsCompleted.has(i));
+
   // ── handlers ────────────────────────────────────────────────────────────────
   const handleReveal      = () => setStep('revealed');
   const handleHideAndPass = () => {
@@ -474,16 +604,19 @@ export default function DealPage() {
       setStep('waiting');
     }
   };
-  const handleRevealBoard = () => {
+  const handleEnterNight = () => {
     initNightPhase();
-    setStep('reveal-board');
+    setStep('night');
   };
-  const handlePlayAgain   = () => {
-    deal();                      // reshuffle same cards
+  const handleEndNight  = () => setStep('day');
+  const handleEndGame   = () => setStep('reveal-board');
+
+  const handlePlayAgain = () => {
+    deal();
     setCurrentPlayerIndex(0);
     setStep('waiting');
   };
-  const handleSetup       = () => {
+  const handleSetup = () => {
     resetGame();
     setLocation('/');
   };
@@ -498,7 +631,7 @@ export default function DealPage() {
     )}>
 
       {/* Ambient glow */}
-      {step !== 'reveal-board' && (
+      {step !== 'night' && step !== 'day' && step !== 'reveal-board' && (
         <div className="absolute inset-0 pointer-events-none">
           <div
             className="absolute top-[-20%] left-[-10%] w-[80%] h-[80%] blur-[150px] rounded-full transition-all duration-1000"
@@ -511,25 +644,23 @@ export default function DealPage() {
         </div>
       )}
 
-      {/* Header */}
+      {/* Header — shown on non-board steps (except revealed) */}
       <AnimatePresence>
-        {step !== 'revealed' && (
+        {step !== 'revealed' && step !== 'night' && step !== 'day' && step !== 'reveal-board' && (
           <motion.div
             initial={{ opacity: 0, y: -20 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -20 }}
             className="w-full px-4 py-3 sm:px-6 sm:py-4 flex justify-between items-center relative z-20 shrink-0"
           >
-            <div className="font-serif text-lg text-primary/80 tracking-widest">
-              ONE NIGHT
-            </div>
+            <div className="font-serif text-lg text-primary/80 tracking-widest">ONE NIGHT</div>
             <div className="flex items-center gap-2">
               {step === 'done' && (
                 <button
-                  onClick={handleRevealBoard}
+                  onClick={handleEnterNight}
                   className="text-xs uppercase tracking-widest text-muted-foreground hover:text-foreground transition-colors"
                 >
-                  skip to board
+                  skip to night
                 </button>
               )}
               <RulebookDrawer />
@@ -538,17 +669,27 @@ export default function DealPage() {
         )}
       </AnimatePresence>
 
-      {/* ── REVEAL BOARD (full-width scrollable) ── */}
-      {step === 'reveal-board' && (
+      {/* Night header */}
+      {step === 'night' && (
+        <div className="shrink-0 px-4 py-3 flex items-center justify-between border-b border-border/20">
+          <div className="flex items-center gap-2 text-primary/80">
+            <Moon className="w-4 h-4" />
+            <span className="font-serif text-sm tracking-widest uppercase">Night Phase</span>
+          </div>
+          <RulebookDrawer />
+        </div>
+      )}
+
+      {/* ── NIGHT PHASE ── */}
+      {step === 'night' && (
         <>
-          <RevealBoard
+          <NightBoard
             playerCount={playerCount}
             playerNames={playerNames}
-            dealtCards={dealtCards}
-            onPlayAgain={handlePlayAgain}
-            onSetup={handleSetup}
+            allNightDone={allNightDone}
+            nightActionsDone={nightActionsDone}
             onNightAction={handleOpenNightAction}
-            nightActionsDone={nightActionsCompleted.size}
+            onEndNight={handleEndNight}
           />
           <AnimatePresence>
             {showNightAction && (
@@ -558,8 +699,22 @@ export default function DealPage() {
         </>
       )}
 
+      {/* ── DAY PHASE ── */}
+      {step === 'day' && <DayPhase onEndGame={handleEndGame} />}
+
+      {/* ── FINAL REVEAL ── */}
+      {step === 'reveal-board' && (
+        <FinalRevealBoard
+          playerCount={playerCount}
+          playerNames={playerNames}
+          nightCards={nightCards}
+          onPlayAgain={handlePlayAgain}
+          onSetup={handleSetup}
+        />
+      )}
+
       {/* ── CARD FLOW STEPS ── */}
-      {step !== 'reveal-board' && (
+      {step !== 'night' && step !== 'day' && step !== 'reveal-board' && (
         <div className="flex-1 flex flex-col items-center justify-center px-4 py-2 relative z-10 w-full max-w-sm mx-auto">
           <AnimatePresence mode="wait">
 
@@ -585,7 +740,6 @@ export default function DealPage() {
                   </p>
                 </div>
 
-                {/* Face-down card */}
                 <div className="w-full max-w-[220px] aspect-[2.5/3.5] bg-card/20 border-2 border-border/30 rounded-2xl flex flex-col items-center justify-center mb-8 shadow-2xl relative overflow-hidden backdrop-blur-sm">
                   <Shield className="w-14 h-14 text-muted-foreground/20 mb-3" />
                   <p className="text-muted-foreground/40 font-serif text-sm tracking-widest uppercase">
@@ -621,7 +775,6 @@ export default function DealPage() {
                     'shadow-[0_0_60px_rgba(0,0,0,0.9)] border-2 mb-5 bg-gradient-to-b',
                     colors.card,
                   )}>
-                    {/* Faction + difficulty */}
                     <div className="flex justify-between items-start mb-3 relative z-10">
                       <span className={cn(
                         'text-[10px] px-2 py-0.5 rounded-sm uppercase tracking-widest font-bold border backdrop-blur-md',
@@ -634,12 +787,10 @@ export default function DealPage() {
                       </span>
                     </div>
 
-                    {/* Icon */}
                     <div className={cn('flex items-center justify-center py-7 relative z-10', colors.icon)}>
                       <div className="opacity-80">{getRoleIcon(currentCard.baseRole, 'lg')}</div>
                     </div>
 
-                    {/* Name + night order */}
                     <div className="text-center relative z-10 mb-3">
                       <h1 className="font-serif text-3xl sm:text-4xl text-foreground drop-shadow-lg leading-tight mb-1 break-words">
                         {currentCard.baseRole}
@@ -652,7 +803,6 @@ export default function DealPage() {
                       </span>
                     </div>
 
-                    {/* Description */}
                     <div className="bg-black/40 backdrop-blur-xl rounded-xl p-3 border border-white/10 relative z-10 overflow-y-auto max-h-40">
                       <p className="text-xs sm:text-sm text-foreground/90 leading-relaxed text-center">
                         {currentCard.description}
@@ -660,7 +810,6 @@ export default function DealPage() {
                     </div>
                   </div>
 
-                  {/* Hide & Pass */}
                   <Button
                     size="lg"
                     variant="outline"
@@ -697,21 +846,20 @@ export default function DealPage() {
                   </p>
                 </div>
 
-                {/* Hold-to-confirm: End Night & Reveal Cards */}
                 <div className="w-full mb-3">
                   <p className="text-[10px] uppercase tracking-widest text-muted-foreground mb-2 text-center">
                     Hold to confirm
                   </p>
                   <HoldButton
-                    onComplete={handleRevealBoard}
-                    label="End Night & Reveal Cards"
-                    icon={<LayoutGrid className="w-4 h-4" />}
+                    onComplete={handleEnterNight}
+                    label="Begin Night Phase"
+                    icon={<Moon className="w-4 h-4" />}
                     className="w-full"
                   />
                 </div>
 
                 <p className="text-xs text-muted-foreground">
-                  Hold the button until it fills to reveal all roles
+                  Hold the button to enter the night phase
                 </p>
               </motion.div>
             )}
