@@ -9,7 +9,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   Eye, EyeOff, Moon, Sun, Redo, Users, User, Target, Shuffle,
   RefreshCw, UserX, Layers, Glasses, Wine, Shield, Skull,
-  LayoutGrid, Settings, CheckCircle, Swords,
+  Settings, CheckCircle, Swords,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -165,7 +165,7 @@ function HoldButton({ onComplete, label, icon, className, disabled }: HoldButton
 // ─── Shared circular-table layout helpers ─────────────────────────────────────
 function useTableSize() {
   const containerRef = useRef<HTMLDivElement>(null);
-  const [size, setSize] = useState({ w: 320, h: 500 });
+  const [size, setSize] = useState({ w: 0, h: 0 });
 
   useLayoutEffect(() => {
     const el = containerRef.current;
@@ -178,6 +178,57 @@ function useTableSize() {
   }, []);
 
   return { containerRef, size };
+}
+
+/**
+ * Computes all geometry for the circular table.
+ * Cards are sized to avoid overlap for any player count (3–13).
+ * Name labels are placed OUTSIDE the card radius (so they're never inside a rotated card).
+ */
+function computeTableGeometry(size: { w: number; h: number }, playerCount: number) {
+  const cx = size.w / 2;
+  const cy = size.h / 2;
+
+  // Use the smaller dimension so the table fits both portrait and landscape
+  const tableSize = Math.min(size.w, size.h);
+
+  // --- Card sizing ---
+  // Start from 15% of tableSize, shrink for large player counts
+  const baseCardW = tableSize * 0.155;
+  const shrink = Math.max(0.48, 1 - Math.max(0, playerCount - 5) * 0.057);
+  const cardW = Math.max(34, Math.min(72, baseCardW * shrink));
+  const cardH = cardW * 1.6;
+
+  // Name label sits outside the card; reserve space for it
+  const nameLabelH = Math.max(14, cardW * 0.2);
+  const nameLabelGap = 4;
+
+  // --- Radius ---
+  // Minimum: adjacent card arcs must not overlap
+  // Arc chord between adjacent slots = 2r * sin(π/N) ≥ cardW + gap
+  const arcGap = 8;
+  const minRadius = (cardW + arcGap) / (2 * Math.sin(Math.PI / Math.max(playerCount, 3)));
+  // Maximum: cards + names stay inside the container
+  const maxRadius = tableSize / 2 - cardH / 2 - nameLabelH - nameLabelGap - 6;
+  const idealRadius = tableSize * 0.38;
+  const radius = Math.max(minRadius, Math.min(idealRadius, maxRadius));
+
+  // --- Center cards ---
+  const cCardW = Math.max(26, Math.min(cardW * 0.82, (radius * 0.6)));
+  const cCardH = cCardW * 1.6;
+  const centerRowW = cCardW * 3 + 8 * 2;
+
+  // --- Felt surface radius ---
+  const tableR = Math.max(cCardH * 0.85, radius * 0.56);
+
+  return { cx, cy, cardW, cardH, cCardW, cCardH, centerRowW, radius, tableR, nameLabelH };
+}
+
+/** Polar angle for player slot i out of n (starts at 12 o'clock, goes clockwise) */
+function playerPolar(i: number, n: number): { angleDeg: number; angleRad: number } {
+  const angleDeg = (360 / n) * i - 90; // -90 → top (12 o'clock)
+  const angleRad = (angleDeg * Math.PI) / 180;
+  return { angleDeg, angleRad };
 }
 
 // ─── Night Board (face-down, night phase) ─────────────────────────────────────
@@ -194,18 +245,9 @@ function NightBoard({
   playerCount, playerNames, allNightDone, nightActionsDone, onNightAction, onEndNight,
 }: NightBoardProps) {
   const { containerRef, size } = useTableSize();
+  const ready = size.w > 0 && size.h > 0;
 
-  const cx = size.w / 2;
-  const cy = size.h / 2;
-  const minDim = Math.min(size.w, size.h);
-  const scaleFactor = Math.min(1, 7 / Math.max(playerCount, 7));
-  const cardW = Math.max(42, Math.min(78, minDim * 0.17 * scaleFactor));
-  const cardH = cardW * 1.55;
-  const radius = minDim * 0.43 - cardH * 0.5;
-  const tableR = Math.max(40, radius - cardH * 0.65);
-  const cCardW = cardW * 0.85;
-  const cCardH = cardH * 0.85;
-  const centerRowW = cCardW * 3 + 8 * 2;
+  const geo = ready ? computeTableGeometry(size, playerCount) : null;
 
   return (
     <motion.div
@@ -216,100 +258,137 @@ function NightBoard({
       className="w-full flex-1 flex flex-col min-h-0 overflow-hidden"
     >
       {/* Table canvas */}
-      <div ref={containerRef} className="flex-1 relative overflow-hidden min-h-0">
-        {size.w > 0 && (
-          <>
-            {/* Felt surface */}
-            <div
-              className="absolute rounded-full bg-emerald-950/20 border border-primary/10"
-              style={{ width: tableR * 2, height: tableR * 2, left: cx - tableR, top: cy - tableR }}
-            />
-            {/* Outer ring */}
-            <div
-              className="absolute rounded-full border border-primary/8"
-              style={{
-                width:  (radius + cardH * 0.45) * 2,
-                height: (radius + cardH * 0.45) * 2,
-                left:   cx - (radius + cardH * 0.45),
-                top:    cy - (radius + cardH * 0.45),
-              }}
-            />
+      <div
+        ref={containerRef}
+        className="flex-1 relative overflow-hidden min-h-0"
+        style={{ minHeight: 280 }}
+      >
+        {ready && geo && (() => {
+          const { cx, cy, cardW, cardH, cCardW, cCardH, centerRowW, radius, tableR, nameLabelH } = geo;
 
-            {/* Center cards (face-down) */}
-            <div
-              className="absolute flex gap-2"
-              style={{ left: cx, top: cy, width: centerRowW, height: cCardH, transform: 'translate(-50%, -50%)' }}
-            >
-              {['I', 'II', 'III'].map((roman, i) => (
-                <motion.div
-                  key={i}
-                  initial={{ opacity: 0, scale: 0.75 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  transition={{ delay: 0.08 + i * 0.07, duration: 0.35, type: 'spring', damping: 14 }}
-                  style={{ width: cCardW, height: cCardH, flexShrink: 0 }}
-                  className="rounded-lg border border-primary/25 bg-gradient-to-b from-card/80 to-background/70 flex flex-col items-center justify-between shadow-lg overflow-hidden"
-                >
-                  <div className="flex-1 flex items-center justify-center w-full px-1 pt-1">
-                    <div className="w-full h-full rounded-md border border-primary/10 bg-primary/4 flex items-center justify-center">
-                      <Moon className="text-primary/25" style={{ width: cCardW * 0.32, height: cCardW * 0.32 }} />
+          return (
+            <>
+              {/* Felt surface */}
+              <div
+                className="absolute rounded-full bg-emerald-950/20 border border-primary/10"
+                style={{ width: tableR * 2, height: tableR * 2, left: cx - tableR, top: cy - tableR }}
+              />
+              {/* Outer decorative ring */}
+              <div
+                className="absolute rounded-full border border-primary/8"
+                style={{
+                  width:  (radius + cardH * 0.5 + 14) * 2,
+                  height: (radius + cardH * 0.5 + 14) * 2,
+                  left:   cx - (radius + cardH * 0.5 + 14),
+                  top:    cy - (radius + cardH * 0.5 + 14),
+                }}
+              />
+
+              {/* Center cards (face-down) */}
+              <div
+                className="absolute flex gap-2"
+                style={{ left: cx, top: cy, width: centerRowW, height: cCardH, transform: 'translate(-50%, -50%)' }}
+              >
+                {['I', 'II', 'III'].map((roman, i) => (
+                  <motion.div
+                    key={i}
+                    initial={{ opacity: 0, scale: 0.75 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    transition={{ delay: 0.08 + i * 0.07, duration: 0.35, type: 'spring', damping: 14 }}
+                    style={{ width: cCardW, height: cCardH, flexShrink: 0 }}
+                    className="rounded-lg border border-primary/25 bg-gradient-to-b from-card/80 to-background/70 flex flex-col items-center justify-between shadow-lg overflow-hidden"
+                  >
+                    <div className="flex-1 flex items-center justify-center w-full px-1 pt-1">
+                      <div className="w-full h-full rounded-md border border-primary/10 bg-primary/4 flex items-center justify-center">
+                        <Moon className="text-primary/25" style={{ width: cCardW * 0.32, height: cCardW * 0.32 }} />
+                      </div>
                     </div>
-                  </div>
-                  <span className="text-primary/40 font-bold uppercase tracking-widest leading-none py-1" style={{ fontSize: Math.max(7, cCardW * 0.13) }}>
-                    {roman}
-                  </span>
-                </motion.div>
-              ))}
-            </div>
+                    <span
+                      className="text-primary/40 font-bold uppercase tracking-widest leading-none py-1"
+                      style={{ fontSize: Math.max(7, cCardW * 0.13) }}
+                    >
+                      {roman}
+                    </span>
+                  </motion.div>
+                ))}
+              </div>
 
-            {/* "CENTER" label */}
-            <div
-              className="absolute text-muted-foreground/30 font-semibold uppercase tracking-widest select-none"
-              style={{ fontSize: 9, left: cx, top: cy + cCardH * 0.5 + 5, transform: 'translateX(-50%)' }}
-            >
-              Center
-            </div>
+              {/* "CENTER" label */}
+              <div
+                className="absolute text-muted-foreground/30 font-semibold uppercase tracking-widest select-none"
+                style={{ fontSize: 9, left: cx, top: cy + cCardH * 0.5 + 5, transform: 'translateX(-50%)' }}
+              >
+                Center
+              </div>
 
-            {/* Player cards (face-down) */}
-            {Array.from({ length: playerCount }, (_, i) => {
-              const posAngleDeg = (360 / playerCount) * i - 90;
-              const posAngleRad = (posAngleDeg * Math.PI) / 180;
-              const x = cx + radius * Math.cos(posAngleRad);
-              const y = cy + radius * Math.sin(posAngleRad);
-              const rotateDeg = (360 / playerCount) * i;
-              const name = getDisplayName(playerNames, i);
-              const fontSize = Math.max(7, Math.min(11, cardW * 0.17));
+              {/* Player cards (face-down) + name labels outside cards */}
+              {Array.from({ length: playerCount }, (_, i) => {
+                const { angleDeg, angleRad } = playerPolar(i, playerCount);
+                const cardX = cx + radius * Math.cos(angleRad);
+                const cardY = cy + radius * Math.sin(angleRad);
+                // Rotate card so its face points outward (player can read it from their seat)
+                const rotateDeg = angleDeg + 90;
 
-              return (
-                <motion.div
-                  key={i}
-                  initial={{ opacity: 0, scale: 0.65 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  transition={{ delay: i * 0.05, duration: 0.35, type: 'spring', damping: 13 }}
-                  style={{
-                    position: 'absolute', left: x, top: y, width: cardW, height: cardH,
-                    transform: `translate(-50%, -50%) rotate(${rotateDeg}deg)`,
-                  }}
-                  className="rounded-lg border-2 border-border/55 bg-gradient-to-b from-card to-background/90 flex flex-col items-center justify-between shadow-[0_4px_18px_rgba(0,0,0,0.6)] overflow-hidden"
-                >
-                  <div className="flex-1 flex items-center justify-center w-full px-1 pt-1">
-                    <div className="w-full h-full rounded-md border border-primary/10 bg-primary/3 flex items-center justify-center">
-                      <Shield className="text-primary/18" style={{ width: cardW * 0.33, height: cardW * 0.33 }} />
+                // Name label: placed radially OUTSIDE the card edge, not rotated
+                const labelR = radius + cardH / 2 + 5;
+                const labelX = cx + labelR * Math.cos(angleRad);
+                const labelY = cy + labelR * Math.sin(angleRad);
+
+                const name = getDisplayName(playerNames, i);
+                const fontSize = Math.max(8, Math.min(12, cardW * 0.19));
+
+                return (
+                  <React.Fragment key={i}>
+                    {/* Face-down card */}
+                    <motion.div
+                      initial={{ opacity: 0, scale: 0.65 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      transition={{ delay: i * 0.05, duration: 0.35, type: 'spring', damping: 13 }}
+                      style={{
+                        position: 'absolute',
+                        left: cardX,
+                        top:  cardY,
+                        width: cardW,
+                        height: cardH,
+                        transform: `translate(-50%, -50%) rotate(${rotateDeg}deg)`,
+                      }}
+                      className="rounded-lg border-2 border-border/55 bg-gradient-to-b from-card to-background/90 flex items-center justify-center shadow-[0_4px_18px_rgba(0,0,0,0.6)] overflow-hidden"
+                    >
+                      <Shield className="text-primary/18" style={{ width: cardW * 0.38, height: cardW * 0.38 }} />
+                    </motion.div>
+
+                    {/* Name label — always horizontal, outside the card */}
+                    <div
+                      style={{
+                        position: 'absolute',
+                        left: labelX,
+                        top:  labelY,
+                        width: Math.max(cardW + 8, 52),
+                        maxWidth: Math.max(cardW + 8, 52),
+                        transform: 'translate(-50%, -50%)',
+                        pointerEvents: 'none',
+                        textAlign: 'center',
+                        lineHeight: 1.2,
+                      }}
+                    >
+                      <span
+                        className="font-serif text-foreground/80 block truncate"
+                        style={{ fontSize }}
+                      >
+                        {name}
+                      </span>
                     </div>
-                  </div>
-                  <div className="w-full text-center font-serif text-foreground/75 leading-none px-0.5 pb-1.5 truncate" style={{ fontSize }}>
-                    {name}
-                  </div>
-                </motion.div>
-              );
-            })}
-          </>
-        )}
+                  </React.Fragment>
+                );
+              })}
+            </>
+          );
+        })()}
       </div>
 
       {/* Action bar */}
       <div className="shrink-0 flex flex-col gap-2 px-4 py-3 border-t border-border/30 bg-background/90 backdrop-blur-md">
         {allNightDone ? (
-          /* All night actions complete — show End Night prominently */
           <div className="flex flex-col gap-2">
             <div className="flex items-center justify-center gap-2 text-green-400 text-xs font-semibold uppercase tracking-widest py-1">
               <CheckCircle className="w-3.5 h-3.5" />
@@ -324,7 +403,6 @@ function NightBoard({
           </div>
         ) : (
           <div className="flex flex-col gap-2">
-            {/* Night Action button — primary CTA */}
             <Button
               onClick={onNightAction}
               className="w-full h-12 font-serif tracking-wider bg-primary text-primary-foreground hover:bg-primary/90 shadow-[0_0_18px_rgba(212,175,55,0.35)] hover:shadow-[0_0_28px_rgba(212,175,55,0.5)] transition-all"
@@ -337,7 +415,6 @@ function NightBoard({
                 </span>
               )}
             </Button>
-            {/* End Night — disabled until all done */}
             <Button
               disabled
               variant="outline"
@@ -395,7 +472,7 @@ function DayPhase({ onEndGame }: DayPhaseProps) {
   );
 }
 
-// ─── Final Reveal Board (shows actual nightCards positions) ───────────────────
+// ─── Final Reveal Board ───────────────────────────────────────────────────────
 interface FinalRevealBoardProps {
   playerCount:  number;
   playerNames:  string[];
@@ -406,24 +483,15 @@ interface FinalRevealBoardProps {
 
 function FinalRevealBoard({ playerCount, playerNames, nightCards, onPlayAgain, onSetup }: FinalRevealBoardProps) {
   const { containerRef, size } = useTableSize();
+  const ready = size.w > 0 && size.h > 0;
 
-  const cx = size.w / 2;
-  const cy = size.h / 2;
-  const minDim = Math.min(size.w, size.h);
-  const scaleFactor = Math.min(1, 7 / Math.max(playerCount, 7));
-  const cardW = Math.max(42, Math.min(78, minDim * 0.17 * scaleFactor));
-  const cardH = cardW * 1.55;
-  const radius = minDim * 0.43 - cardH * 0.5;
-  const tableR = Math.max(40, radius - cardH * 0.65);
-  const cCardW = cardW * 0.85;
-  const cCardH = cardH * 0.85;
-  const centerRowW = cCardW * 3 + 8 * 2;
+  const geo = ready ? computeTableGeometry(size, playerCount) : null;
 
   const getColor = (card: RoleDef | undefined) => {
     if (!card) return { bg: 'bg-card/40', border: 'border-border/30', icon: 'text-muted-foreground/40', badge: 'text-muted-foreground' };
     switch (card.faction) {
-      case 'Werewolf': return { bg: 'bg-red-950/50', border: 'border-red-700/50', icon: 'text-red-400', badge: 'text-red-300' };
-      case 'Village':  return { bg: 'bg-blue-950/40', border: 'border-blue-700/40', icon: 'text-blue-400', badge: 'text-blue-300' };
+      case 'Werewolf': return { bg: 'bg-red-950/50',    border: 'border-red-700/50',    icon: 'text-red-400',    badge: 'text-red-300' };
+      case 'Village':  return { bg: 'bg-blue-950/40',   border: 'border-blue-700/40',   icon: 'text-blue-400',   badge: 'text-blue-300' };
       case 'Tanner':   return { bg: 'bg-orange-950/40', border: 'border-orange-700/40', icon: 'text-orange-400', badge: 'text-orange-300' };
       default:         return { bg: 'bg-purple-950/40', border: 'border-purple-700/40', icon: 'text-purple-400', badge: 'text-purple-300' };
     }
@@ -444,100 +512,143 @@ function FinalRevealBoard({ playerCount, playerNames, nightCards, onPlayAgain, o
       </div>
 
       {/* Table canvas */}
-      <div ref={containerRef} className="flex-1 relative overflow-hidden min-h-0">
-        {size.w > 0 && (
-          <>
-            {/* Felt surface */}
-            <div
-              className="absolute rounded-full bg-emerald-950/20 border border-primary/10"
-              style={{ width: tableR * 2, height: tableR * 2, left: cx - tableR, top: cy - tableR }}
-            />
+      <div
+        ref={containerRef}
+        className="flex-1 relative overflow-hidden min-h-0"
+        style={{ minHeight: 280 }}
+      >
+        {ready && geo && (() => {
+          const { cx, cy, cardW, cardH, cCardW, cCardH, centerRowW, radius, tableR } = geo;
 
-            {/* Center cards (revealed) */}
-            <div
-              className="absolute flex gap-2"
-              style={{ left: cx, top: cy, width: centerRowW, height: cCardH, transform: 'translate(-50%, -50%)' }}
-            >
-              {['I', 'II', 'III'].map((roman, i) => {
-                const card = nightCards[playerCount + i];
+          return (
+            <>
+              {/* Felt surface */}
+              <div
+                className="absolute rounded-full bg-emerald-950/20 border border-primary/10"
+                style={{ width: tableR * 2, height: tableR * 2, left: cx - tableR, top: cy - tableR }}
+              />
+
+              {/* Center cards (revealed) */}
+              <div
+                className="absolute flex gap-2"
+                style={{ left: cx, top: cy, width: centerRowW, height: cCardH, transform: 'translate(-50%, -50%)' }}
+              >
+                {['I', 'II', 'III'].map((roman, i) => {
+                  const card = nightCards[playerCount + i];
+                  const c = getColor(card);
+                  return (
+                    <motion.div
+                      key={i}
+                      initial={{ opacity: 0, scale: 0.75, rotateY: -90 }}
+                      animate={{ opacity: 1, scale: 1, rotateY: 0 }}
+                      transition={{ delay: 0.1 + i * 0.1, duration: 0.5, type: 'spring', damping: 14 }}
+                      style={{ width: cCardW, height: cCardH, flexShrink: 0 }}
+                      className={cn('rounded-lg border flex flex-col items-center justify-between shadow-lg overflow-hidden', c.bg, c.border)}
+                    >
+                      <div className={cn('flex-1 flex items-center justify-center w-full', c.icon)}>
+                        {card
+                          ? getRoleIcon(card.baseRole, 'sm')
+                          : <Moon className="opacity-20" style={{ width: cCardW * 0.32, height: cCardW * 0.32 }} />}
+                      </div>
+                      <div className="w-full text-center px-0.5 pb-1 leading-none">
+                        <div className={cn('font-serif truncate', c.badge)} style={{ fontSize: Math.max(6, cCardW * 0.15) }}>
+                          {card?.baseRole ?? '?'}
+                        </div>
+                        <div className="text-muted-foreground/40 uppercase tracking-widest" style={{ fontSize: Math.max(5, cCardW * 0.11) }}>
+                          {roman}
+                        </div>
+                      </div>
+                    </motion.div>
+                  );
+                })}
+              </div>
+
+              {/* "CENTER" label */}
+              <div
+                className="absolute text-muted-foreground/30 font-semibold uppercase tracking-widest select-none"
+                style={{ fontSize: 9, left: cx, top: cy + cCardH * 0.5 + 5, transform: 'translateX(-50%)' }}
+              >
+                Center
+              </div>
+
+              {/* Player cards (revealed) + name labels outside cards */}
+              {Array.from({ length: playerCount }, (_, i) => {
+                const card = nightCards[i];
                 const c = getColor(card);
+                const { angleDeg, angleRad } = playerPolar(i, playerCount);
+                const cardX = cx + radius * Math.cos(angleRad);
+                const cardY = cy + radius * Math.sin(angleRad);
+                const rotateDeg = angleDeg + 90;
+
+                // Role text inside the card (rotated with card, so player reads it from their seat)
+                const roleFontSize = Math.max(6, Math.min(9, cardW * 0.145));
+
+                // Name label: outside the card, NOT rotated
+                const labelR = radius + cardH / 2 + 5;
+                const labelX = cx + labelR * Math.cos(angleRad);
+                const labelY = cy + labelR * Math.sin(angleRad);
+                const name = getDisplayName(playerNames, i);
+                const nameFontSize = Math.max(8, Math.min(12, cardW * 0.19));
+
                 return (
-                  <motion.div
-                    key={i}
-                    initial={{ opacity: 0, scale: 0.75, rotateY: -90 }}
-                    animate={{ opacity: 1, scale: 1, rotateY: 0 }}
-                    transition={{ delay: 0.1 + i * 0.1, duration: 0.5, type: 'spring', damping: 14 }}
-                    style={{ width: cCardW, height: cCardH, flexShrink: 0 }}
-                    className={cn('rounded-lg border flex flex-col items-center justify-between shadow-lg overflow-hidden', c.bg, c.border)}
-                  >
-                    <div className={cn('flex-1 flex items-center justify-center w-full', c.icon)}>
-                      {card ? getRoleIcon(card.baseRole, 'sm') : <Moon className="opacity-20" style={{ width: cCardW * 0.32, height: cCardW * 0.32 }} />}
-                    </div>
-                    <div className="w-full text-center px-0.5 pb-1 leading-none">
-                      <div className={cn('font-serif truncate', c.badge)} style={{ fontSize: Math.max(6, cCardW * 0.15) }}>
-                        {card?.baseRole ?? '?'}
+                  <React.Fragment key={i}>
+                    {/* Revealed card */}
+                    <motion.div
+                      initial={{ opacity: 0, scale: 0.65, rotateY: -90 }}
+                      animate={{ opacity: 1, scale: 1, rotateY: 0 }}
+                      transition={{ delay: i * 0.07 + 0.2, duration: 0.5, type: 'spring', damping: 13 }}
+                      style={{
+                        position: 'absolute',
+                        left: cardX,
+                        top:  cardY,
+                        width: cardW,
+                        height: cardH,
+                        transform: `translate(-50%, -50%) rotate(${rotateDeg}deg)`,
+                      }}
+                      className={cn(
+                        'rounded-lg border-2 flex flex-col items-center justify-between shadow-[0_4px_18px_rgba(0,0,0,0.6)] overflow-hidden',
+                        c.bg, c.border,
+                      )}
+                    >
+                      <div className={cn('flex-1 flex items-center justify-center w-full px-1 pt-1', c.icon)}>
+                        {card
+                          ? getRoleIcon(card.baseRole, 'sm')
+                          : <Shield className="opacity-20" style={{ width: cardW * 0.33, height: cardW * 0.33 }} />}
                       </div>
-                      <div className="text-muted-foreground/40 uppercase tracking-widest" style={{ fontSize: Math.max(5, cCardW * 0.11) }}>
-                        {roman}
+                      <div className="w-full text-center px-0.5 pb-1.5 leading-none">
+                        <div className={cn('font-serif truncate', c.badge)} style={{ fontSize: roleFontSize }}>
+                          {card?.baseRole ?? '?'}
+                        </div>
                       </div>
+                    </motion.div>
+
+                    {/* Name label — always horizontal, outside the card */}
+                    <div
+                      style={{
+                        position: 'absolute',
+                        left: labelX,
+                        top:  labelY,
+                        width: Math.max(cardW + 8, 52),
+                        maxWidth: Math.max(cardW + 8, 52),
+                        transform: 'translate(-50%, -50%)',
+                        pointerEvents: 'none',
+                        textAlign: 'center',
+                        lineHeight: 1.2,
+                      }}
+                    >
+                      <span
+                        className="font-serif text-foreground/75 block truncate"
+                        style={{ fontSize: nameFontSize }}
+                      >
+                        {name}
+                      </span>
                     </div>
-                  </motion.div>
+                  </React.Fragment>
                 );
               })}
-            </div>
-
-            {/* "CENTER" label */}
-            <div
-              className="absolute text-muted-foreground/30 font-semibold uppercase tracking-widest select-none"
-              style={{ fontSize: 9, left: cx, top: cy + cCardH * 0.5 + 5, transform: 'translateX(-50%)' }}
-            >
-              Center
-            </div>
-
-            {/* Player cards (revealed) */}
-            {Array.from({ length: playerCount }, (_, i) => {
-              const card = nightCards[i];
-              const c = getColor(card);
-              const posAngleDeg = (360 / playerCount) * i - 90;
-              const posAngleRad = (posAngleDeg * Math.PI) / 180;
-              const x = cx + radius * Math.cos(posAngleRad);
-              const y = cy + radius * Math.sin(posAngleRad);
-              const rotateDeg = (360 / playerCount) * i;
-              const name = getDisplayName(playerNames, i);
-              const fontSize = Math.max(7, Math.min(11, cardW * 0.17));
-              const roleFontSize = Math.max(6, Math.min(9, cardW * 0.14));
-
-              return (
-                <motion.div
-                  key={i}
-                  initial={{ opacity: 0, scale: 0.65, rotateY: -90 }}
-                  animate={{ opacity: 1, scale: 1, rotateY: 0 }}
-                  transition={{ delay: i * 0.07 + 0.2, duration: 0.5, type: 'spring', damping: 13 }}
-                  style={{
-                    position: 'absolute', left: x, top: y, width: cardW, height: cardH,
-                    transform: `translate(-50%, -50%) rotate(${rotateDeg}deg)`,
-                  }}
-                  className={cn(
-                    'rounded-lg border-2 flex flex-col items-center justify-between shadow-[0_4px_18px_rgba(0,0,0,0.6)] overflow-hidden',
-                    c.bg, c.border,
-                  )}
-                >
-                  <div className={cn('flex-1 flex items-center justify-center w-full px-1 pt-1', c.icon)}>
-                    {card ? getRoleIcon(card.baseRole, 'sm') : <Shield className="opacity-20" style={{ width: cardW * 0.33, height: cardW * 0.33 }} />}
-                  </div>
-                  <div className="w-full text-center px-0.5 pb-1 leading-none">
-                    <div className={cn('font-serif truncate', c.badge)} style={{ fontSize: roleFontSize }}>
-                      {card?.baseRole ?? '?'}
-                    </div>
-                    <div className="text-foreground/55 truncate" style={{ fontSize }}>
-                      {name}
-                    </div>
-                  </div>
-                </motion.div>
-              );
-            })}
-          </>
-        )}
+            </>
+          );
+        })()}
       </div>
 
       {/* Action bar */}
@@ -588,13 +699,11 @@ export default function DealPage() {
   const currentCard  = dealtCards[currentPlayerIndex];
   const colors       = factionColor(currentCard?.faction);
 
-  // How many players have finished their night action
   const nightActionsDone = nightActionsCompleted.size;
-  // All done when every player slot is in the completed set
   const allNightDone = Array.from({ length: playerCount }, (_, i) => i)
     .every(i => nightActionsCompleted.has(i));
 
-  // ── handlers ────────────────────────────────────────────────────────────────
+  // ── handlers ─────────────────────────────────────────────────────────────────
   const handleReveal      = () => setStep('revealed');
   const handleHideAndPass = () => {
     if (isLastPlayer) {
@@ -644,7 +753,7 @@ export default function DealPage() {
         </div>
       )}
 
-      {/* Header — shown on non-board steps (except revealed) */}
+      {/* Header — shown on card-flow steps */}
       <AnimatePresence>
         {step !== 'revealed' && step !== 'night' && step !== 'day' && step !== 'reveal-board' && (
           <motion.div
@@ -771,7 +880,7 @@ export default function DealPage() {
                 >
                   {/* Role card */}
                   <div className={cn(
-                    'w-full max-w-[300px] min-h-[320px] rounded-2xl p-5 flex flex-col relative overflow-hidden',
+                    'w-full max-w-[300px] rounded-2xl p-5 flex flex-col relative overflow-hidden',
                     'shadow-[0_0_60px_rgba(0,0,0,0.9)] border-2 mb-5 bg-gradient-to-b',
                     colors.card,
                   )}>
@@ -787,7 +896,7 @@ export default function DealPage() {
                       </span>
                     </div>
 
-                    <div className={cn('flex items-center justify-center py-7 relative z-10', colors.icon)}>
+                    <div className={cn('flex items-center justify-center py-6 relative z-10', colors.icon)}>
                       <div className="opacity-80">{getRoleIcon(currentCard.baseRole, 'lg')}</div>
                     </div>
 
@@ -803,7 +912,8 @@ export default function DealPage() {
                       </span>
                     </div>
 
-                    <div className="bg-black/40 backdrop-blur-xl rounded-xl p-3 border border-white/10 relative z-10 overflow-y-auto max-h-40">
+                    {/* Description — scrollable if it overflows */}
+                    <div className="bg-black/40 backdrop-blur-xl rounded-xl p-3 border border-white/10 relative z-10 overflow-y-auto max-h-44">
                       <p className="text-xs sm:text-sm text-foreground/90 leading-relaxed text-center">
                         {currentCard.description}
                       </p>

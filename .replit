@@ -11,6 +11,27 @@ env = { "CI" = "true" }
 [workflows]
 runButton = "Project"
 
+[[workflows.workflow]]
+name = "Project"
+mode = "parallel"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "artifacts/werewolf-dealer: web"
+
+[[workflows.workflow]]
+name = "artifacts/werewolf-dealer: web"
+author = "agent"
+
+[workflows.workflow.metadata]
+outputType = "webview"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "PORT=19404 BASE_PATH=/ pnpm --filter @workspace/werewolf-dealer run dev"
+waitForPort = 19404
+
 [agent]
 stack = "PNPM_WORKSPACE"
 expertMode = true
