@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
 import { useLocation } from 'wouter';
 import { useGame, getDisplayName } from '@/store/game-store';
 import { RoleDef } from '@/lib/game-data';
@@ -226,34 +226,7 @@ function MiniCard({ card, label, isCenter }: MiniCardProps) {
   );
 }
 
-// ─── Win conditions cheat sheet ───────────────────────────────────────────────
-function WinConditions() {
-  const rows = [
-    { color: 'text-blue-300', bg: 'bg-blue-500/10 border-blue-800/50',   label: 'Village wins', cond: 'At least 1 Werewolf dies' },
-    { color: 'text-red-300',  bg: 'bg-red-500/10 border-red-800/50',     label: 'Wolves win',   cond: 'No Werewolf dies' },
-    { color: 'text-orange-300', bg: 'bg-orange-500/10 border-orange-800/50', label: 'Tanner wins', cond: 'The Tanner dies' },
-    { color: 'text-slate-400', bg: 'bg-slate-800/40 border-slate-700/40', label: 'No wolves?',   cond: 'Village wins only if no one dies' },
-  ];
-  return (
-    <div className="mt-6 w-full">
-      <h3 className="text-xs uppercase tracking-widest text-muted-foreground mb-3 text-center font-semibold">
-        Win Conditions
-      </h3>
-      <div className="flex flex-col gap-2">
-        {rows.map(r => (
-          <div key={r.label} className={cn('flex items-center gap-3 px-3 py-2 rounded-lg border text-sm', r.bg)}>
-            <span className={cn('font-bold shrink-0 w-24 text-xs uppercase tracking-wide', r.color)}>
-              {r.label}
-            </span>
-            <span className="text-foreground/70 text-xs">{r.cond}</span>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-// ─── Reveal Board screen ──────────────────────────────────────────────────────
+// ─── Circular table board (night phase) ──────────────────────────────────────
 interface RevealBoardProps {
   playerCount: number;
   playerNames: string[];
@@ -262,73 +235,189 @@ interface RevealBoardProps {
   onSetup:     () => void;
 }
 
-function RevealBoard({ playerCount, playerNames, dealtCards, onPlayAgain, onSetup }: RevealBoardProps) {
-  const playerCards = dealtCards.slice(0, playerCount);
-  const centerCards = dealtCards.slice(playerCount);
+function RevealBoard({ playerCount, playerNames, onPlayAgain, onSetup }: RevealBoardProps) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [size, setSize] = useState({ w: 320, h: 500 });
+
+  useLayoutEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const sync = () => setSize({ w: el.clientWidth, h: el.clientHeight });
+    sync();
+    const ro = new ResizeObserver(sync);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  const cx = size.w / 2;
+  const cy = size.h / 2;
+  const minDim = Math.min(size.w, size.h);
+
+  // Card dimensions — shrink slightly for large player counts
+  const scaleFactor = Math.min(1, 7 / Math.max(playerCount, 7));
+  const cardW = Math.max(42, Math.min(78, minDim * 0.17 * scaleFactor));
+  const cardH = cardW * 1.55;
+
+  // Radius: place cards near the edge, leaving room for the card body
+  const radius  = minDim * 0.43 - cardH * 0.5;
+  // Inner felt circle radius
+  const tableR  = Math.max(40, radius - cardH * 0.65);
+
+  // Center card dimensions (slightly smaller than player cards)
+  const cCardW = cardW * 0.85;
+  const cCardH = cardH * 0.85;
+  // Total width of the three center cards + gaps
+  const centerRowW = cCardW * 3 + 8 * 2;
 
   return (
     <motion.div
-      key="reveal-board"
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.5 }}
-      className="w-full flex-1 overflow-y-auto"
+      key="table-board"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={{ duration: 0.4 }}
+      className="w-full flex-1 flex flex-col min-h-0 overflow-hidden"
     >
-      <div className="max-w-md mx-auto px-4 pb-8 pt-2">
-
-        {/* Player cards */}
-        <h2 className="font-serif text-xl text-foreground mb-3">
-          Player Cards
-        </h2>
-        <div className="grid grid-cols-2 gap-3 mb-6">
-          {playerCards.map((card, i) => (
-            <MiniCard
-              key={i}
-              card={card}
-              label={getDisplayName(playerNames, i)}
-              index={i}
+      {/* Table canvas */}
+      <div ref={containerRef} className="flex-1 relative overflow-hidden min-h-0">
+        {size.w > 0 && (
+          <>
+            {/* Felt surface */}
+            <div
+              className="absolute rounded-full bg-emerald-950/20 border border-primary/10"
+              style={{ width: tableR * 2, height: tableR * 2, left: cx - tableR, top: cy - tableR }}
             />
-          ))}
-        </div>
 
-        {/* Center cards */}
-        <h2 className="font-serif text-xl text-foreground mb-3">
-          Center Cards
-        </h2>
-        <div className="grid grid-cols-3 gap-3 mb-6">
-          {centerCards.map((card, i) => (
-            <MiniCard
-              key={i}
-              card={card}
-              label={`Center ${i + 1}`}
-              isCenter
+            {/* Outer table ring */}
+            <div
+              className="absolute rounded-full border border-primary/8"
+              style={{
+                width:  (radius + cardH * 0.45) * 2,
+                height: (radius + cardH * 0.45) * 2,
+                left:   cx - (radius + cardH * 0.45),
+                top:    cy - (radius + cardH * 0.45),
+              }}
             />
-          ))}
-        </div>
 
-        {/* Win conditions */}
-        <WinConditions />
+            {/* Center cards */}
+            <div
+              className="absolute flex gap-2"
+              style={{
+                left:      cx,
+                top:       cy,
+                width:     centerRowW,
+                height:    cCardH,
+                transform: 'translate(-50%, -50%)',
+              }}
+            >
+              {['I', 'II', 'III'].map((roman, i) => (
+                <motion.div
+                  key={i}
+                  initial={{ opacity: 0, scale: 0.75 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  transition={{ delay: 0.08 + i * 0.07, duration: 0.35, type: 'spring', damping: 14 }}
+                  style={{ width: cCardW, height: cCardH, flexShrink: 0 }}
+                  className="rounded-lg border border-primary/25 bg-gradient-to-b from-card/80 to-background/70 flex flex-col items-center justify-between shadow-lg overflow-hidden"
+                >
+                  <div className="flex-1 flex items-center justify-center w-full px-1 pt-1">
+                    <div className="w-full h-full rounded-md border border-primary/10 bg-primary/4 flex items-center justify-center">
+                      <Moon
+                        className="text-primary/25"
+                        style={{ width: cCardW * 0.32, height: cCardW * 0.32 }}
+                      />
+                    </div>
+                  </div>
+                  <span
+                    className="text-primary/40 font-bold uppercase tracking-widest leading-none py-1"
+                    style={{ fontSize: Math.max(7, cCardW * 0.13) }}
+                  >
+                    {roman}
+                  </span>
+                </motion.div>
+              ))}
+            </div>
 
-        {/* Action buttons */}
-        <div className="flex flex-col gap-3 mt-8">
-          <Button
-            size="lg"
-            onClick={onPlayAgain}
-            className="w-full h-14 font-serif tracking-widest bg-primary text-primary-foreground hover:bg-primary/90 shadow-[0_0_20px_rgba(212,175,55,0.3)]"
-          >
-            <Redo className="w-4 h-4 mr-2" />
-            Play Again with Same Roles
-          </Button>
-          <Button
-            size="lg"
-            variant="outline"
-            onClick={onSetup}
-            className="w-full h-14 font-serif tracking-widest border-border/60 text-foreground/70 hover:bg-card hover:text-foreground"
-          >
-            <Settings className="w-4 h-4 mr-2" />
-            Change Roles / Setup
-          </Button>
-        </div>
+            {/* "CENTER" label below the three cards */}
+            <div
+              className="absolute text-muted-foreground/30 font-semibold uppercase tracking-widest select-none"
+              style={{
+                fontSize: 9,
+                left:     cx,
+                top:      cy + cCardH * 0.5 + 5,
+                transform: 'translateX(-50%)',
+              }}
+            >
+              Center
+            </div>
+
+            {/* Player cards around the circle */}
+            {Array.from({ length: playerCount }, (_, i) => {
+              const posAngleDeg = (360 / playerCount) * i - 90;
+              const posAngleRad = (posAngleDeg * Math.PI) / 180;
+              const x           = cx + radius * Math.cos(posAngleRad);
+              const y           = cy + radius * Math.sin(posAngleRad);
+              // Rotate card so the label faces outward from centre
+              const rotateDeg   = (360 / playerCount) * i;
+              const name        = getDisplayName(playerNames, i);
+              const fontSize    = Math.max(7, Math.min(11, cardW * 0.17));
+
+              return (
+                <motion.div
+                  key={i}
+                  initial={{ opacity: 0, scale: 0.65 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  transition={{ delay: i * 0.05, duration: 0.35, type: 'spring', damping: 13 }}
+                  style={{
+                    position:  'absolute',
+                    left:      x,
+                    top:       y,
+                    width:     cardW,
+                    height:    cardH,
+                    transform: `translate(-50%, -50%) rotate(${rotateDeg}deg)`,
+                  }}
+                  className="rounded-lg border-2 border-border/55 bg-gradient-to-b from-card to-background/90 flex flex-col items-center justify-between shadow-[0_4px_18px_rgba(0,0,0,0.6)] overflow-hidden"
+                >
+                  {/* Card back pattern */}
+                  <div className="flex-1 flex items-center justify-center w-full px-1 pt-1">
+                    <div className="w-full h-full rounded-md border border-primary/10 bg-primary/3 flex items-center justify-center">
+                      <Shield
+                        className="text-primary/18"
+                        style={{ width: cardW * 0.33, height: cardW * 0.33 }}
+                      />
+                    </div>
+                  </div>
+                  {/* Player name */}
+                  <div
+                    className="w-full text-center font-serif text-foreground/75 leading-none px-0.5 pb-1.5 truncate"
+                    style={{ fontSize }}
+                  >
+                    {name}
+                  </div>
+                </motion.div>
+              );
+            })}
+          </>
+        )}
+      </div>
+
+      {/* Action bar */}
+      <div className="shrink-0 flex gap-2 px-4 py-3 border-t border-border/30 bg-background/90 backdrop-blur-md">
+        <Button
+          size="sm"
+          onClick={onPlayAgain}
+          className="flex-1 font-serif tracking-wider bg-primary text-primary-foreground hover:bg-primary/90 shadow-[0_0_12px_rgba(212,175,55,0.25)]"
+        >
+          <Redo className="w-3.5 h-3.5 mr-1.5" />
+          Play Again
+        </Button>
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={onSetup}
+          className="flex-1 font-serif tracking-wider border-border/50 text-foreground/65 hover:bg-card hover:text-foreground"
+        >
+          <Settings className="w-3.5 h-3.5 mr-1.5" />
+          Change Setup
+        </Button>
       </div>
     </motion.div>
   );
@@ -378,7 +467,7 @@ export default function DealPage() {
   return (
     <div className={cn(
       'min-h-[100dvh] w-full bg-background flex flex-col relative',
-      step === 'reveal-board' || step === 'revealed' ? 'overflow-y-auto' : 'overflow-hidden',
+      step === 'revealed' ? 'overflow-y-auto' : 'overflow-hidden',
     )}>
 
       {/* Ambient glow */}
